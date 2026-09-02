@@ -1,0 +1,24 @@
+# Rust
+/target/
+
+# TypeScript / JavaScript
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Environment files and local secrets
+.env
+.env.*
+.devcontainer/*.env
+!.env.example
+!.devcontainer/*.env.example
+
+# IDEs
+/.idea/
+
+# Logs and operating-system files
+*.log
+.DS_Store
+Thumbs.db
