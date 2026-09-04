@@ -22,3 +22,6 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+
+# Downloaded market data
+/data/instruments/*.csv

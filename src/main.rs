@@ -1,22 +1,27 @@
 mod configs;
-mod kite_api;
+mod dhan_api;
+mod server;
+mod utils;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use configs::env_config::load_env;
-use kite_api::kite_auth::get_token;
-use kite_api::ws_protocol::kite_ws::ws_kite_connection;
+use dhan_api::dhan_auth::get_dhan_credentials;
+use dhan_api::rest_protocol::instrument_dl::download_instrument_master;
+use dhan_api::ws_protocol::dhan_ws::ws_dhan_connection;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     load_env()?;
 
-    let api_key =
-        std::env::var("KITE_API_KEY").context("Missing KITE_API_KEY environment variable")?;
-    let access_token = get_token().await?;
+    let credentials = get_dhan_credentials().await?;
 
-    println!("Received Kite access token: {}", &access_token);
+    let instrument_path = download_instrument_master().await?;
+    println!(
+        "Dhan instrument master saved to {}",
+        instrument_path.display()
+    );
 
-    ws_kite_connection(&api_key, &access_token).await?;
+    ws_dhan_connection(&credentials.client_id, &credentials.access_token).await?;
 
     Ok(())
 }

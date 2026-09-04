@@ -2,36 +2,37 @@ use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-const KITE_WEBSOCKET_URL: &str = "wss://ws.kite.trade/";
+const DHAN_WEBSOCKET_URL: &str = "wss://api-feed.dhan.co/";
 
-pub(crate) async fn ws_kite_connection(api_key: &str, access_token: &str) -> Result<()> {
-    let ws_url = format!("{KITE_WEBSOCKET_URL}?api_key={api_key}&access_token={access_token}");
+pub(crate) async fn ws_dhan_connection(client_id: &str, access_token: &str) -> Result<()> {
+    let ws_url = format!(
+        "{DHAN_WEBSOCKET_URL}?version=2&token={access_token}&clientId={client_id}&authType=2"
+    );
 
-    println!("Connecting to Kite WebSocket...");
+    println!("Connecting to Dhan WebSocket...");
 
     let (mut ws_stream, response) = connect_async(&ws_url)
         .await
-        .context("Failed to connect to Kite WebSocket")?;
+        .context("Failed to connect to Dhan WebSocket")?;
 
     println!("Connected successfully: HTTP {}", response.status());
 
     while let Some(message) = ws_stream.next().await {
-        match message.context("Failed to read Kite WebSocket message")? {
-            Message::Binary(data) if data.len() == 1 => {}
+        match message.context("Failed to read Dhan WebSocket message")? {
             Message::Binary(data) => {
-                println!("Received {} binary bytes", data.len());
+                println!("Received {} Dhan binary bytes", data.len());
             }
             Message::Text(text) => {
-                println!("Text message: {text}");
+                println!("Dhan text message: {text}");
             }
             Message::Ping(data) => {
                 ws_stream
                     .send(Message::Pong(data))
                     .await
-                    .context("Failed to reply to Kite WebSocket ping")?;
+                    .context("Failed to reply to Dhan WebSocket ping")?;
             }
             Message::Close(frame) => {
-                println!("WebSocket closed: {frame:?}");
+                println!("Dhan WebSocket closed: {frame:?}");
                 break;
             }
             Message::Pong(_) | Message::Frame(_) => {}
