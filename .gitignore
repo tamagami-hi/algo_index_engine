@@ -25,3 +25,6 @@ Thumbs.db
 
 # Downloaded market data
 /data/instruments/*.csv
+
+# Fetched session credentials
+/data/sessions/
