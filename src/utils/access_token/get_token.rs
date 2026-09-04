@@ -2,15 +2,36 @@ use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use serde::Deserialize;
 
-use super::session_file::{cached_token, save_token};
+use super::expiry::{
+    Expiry, StatedExpiry, humanize, now_unix_seconds, parse_stated_expiry, resolve,
+};
+use super::session_file::{SessionRecord, cached_token, save_token};
 
-/// One IST trading day. Dhan access tokens are day-scoped, so a cached token older
-/// than this is very unlikely to still be accepted at the feed handshake.
-const STALE_AFTER_SECONDS: u64 = 24 * 60 * 60;
+/// A token this close to expiry is treated as already gone.
+///
+/// Startup reads the instrument master and opens five feed connections, so a token
+/// with seconds left would be accepted here and then rejected mid-handshake. Better to
+/// fail while the reason is still obvious.
+const EXPIRY_MARGIN_SECONDS: i64 = 60;
 
+/// What the token route returns.
+///
+/// The Cal Spread route sends `access_token` plus `expires_at` (epoch ms), `client_id`
+/// and `login_date`. Dhan's own endpoints — `generateAccessToken`, `consumeApp-consent`
+/// and `partner/consume-consent` — send `accessToken` and `expiryTime` (an ISO stamp in
+/// IST) alongside `dhanClientId`, `dhanClientName`, `dhanClientUcc` and
+/// `givenPowerOfAttorney`.
+///
+/// Both spellings are accepted so `DHAN_TOKEN_URL` can point at either without a code
+/// change. Only the token and its expiry are used; the identity fields are deliberately
+/// not consumed, since `DHAN_CLIENT_ID` is already configured separately.
 #[derive(Deserialize)]
 struct TokenResponse {
+    #[serde(alias = "accessToken")]
     access_token: String,
+    /// `expires_at` from the Cal Spread route, `expiryTime` from Dhan.
+    #[serde(default, alias = "expiryTime")]
+    expires_at: StatedExpiry,
 }
 
 /// Error shape returned by the Cal Spread token route, e.g. a 409 with
@@ -20,35 +41,74 @@ struct TokenErrorResponse {
     error: String,
 }
 
-/// Obtain a Dhan access token, falling back to the cached one.
+/// A token plus when it stops being usable, and the reply it came from.
+struct FetchedToken {
+    token: String,
+    expiry: Expiry,
+    fetched_at: i64,
+    /// The route's reply, verbatim, for the cache to record.
+    response: serde_json::Value,
+}
+
+/// Obtain a Dhan access token, falling back to the cached one while it is still valid.
 ///
 /// The token route depends on an upstream Dhan session that is not always live — it
-/// answers 409 when the admin has not connected Dhan — and that has nothing to do with
+/// answers 409 when the admin has not connected Dhan — and that says nothing about
 /// whether the token we already hold is still good. So a fetch failure is not fatal
-/// while a cached token exists.
+/// while an unexpired cached token exists.
+///
+/// A cached token past its expiry is REFUSED, not used with a warning. Dhan issues
+/// tokens for 24 hours; sending an expired one produces opaque rejections at the feed
+/// handshake, far from the actual cause. Failing here names the cause once.
 ///
 /// A freshly fetched token is written to the cache; a token that CAME from the cache is
-/// not written back. Re-writing it would refresh the file's timestamp and make a token
-/// from days ago look brand new, destroying the only staleness signal there is.
+/// not written back, since rewriting it would serve no purpose and only churn the file.
 pub(crate) async fn get_token(url: &str) -> Result<String> {
     let fetch_error = match fetch_token(url).await {
-        Ok(token) => {
+        Ok(fetched) => {
+            report_validity(&fetched.expiry)?;
             // A cache write failure must not sink a good token: report and continue.
-            match save_token(&token).await {
+            let record = SessionRecord {
+                access_token: &fetched.token,
+                expiry: fetched.expiry,
+                fetched_at: fetched.fetched_at,
+                response: Some(fetched.response),
+            };
+            match save_token(record).await {
                 Ok(path) => println!("Dhan access token saved to {}", path.display()),
                 Err(error) => {
                     eprintln!("Warning: could not cache the Dhan access token: {error:#}");
                 }
             }
-            return Ok(token);
+            return Ok(fetched.token);
         }
         Err(error) => error,
     };
 
+    let now = now_unix_seconds()?;
     match cached_token().await {
         Ok(Some(cached)) => {
+            let remaining = cached.expiry.remaining_seconds(now);
+            if remaining <= EXPIRY_MARGIN_SECONDS {
+                let how = if cached.expiry.is_expired(now) {
+                    format!("expired {} ago", humanize(remaining))
+                } else {
+                    format!("expires in {}", humanize(remaining))
+                };
+                return Err(fetch_error).context(format!(
+                    "the cached Dhan access token is unusable: it {how} ({}). \
+                     Dhan tokens are valid for 24 hours — reconnect Dhan, or set \
+                     DHAN_ACCESS_TOKEN to a token from the Dhan dashboard",
+                    cached.expiry.source.describe()
+                ));
+            }
+
             eprintln!("Warning: could not fetch a Dhan access token: {fetch_error:#}");
-            eprintln!("Warning: falling back to the cached token{}.", age_note(&cached));
+            eprintln!(
+                "Warning: using the cached token, valid for another {} ({}).",
+                humanize(remaining),
+                cached.expiry.source.describe()
+            );
             Ok(cached.token)
         }
         Ok(None) => Err(fetch_error).context(
@@ -63,29 +123,32 @@ pub(crate) async fn get_token(url: &str) -> Result<String> {
     }
 }
 
-/// Describe a cached token's age, flagging one that is almost certainly expired.
-fn age_note(cached: &super::session_file::CachedToken) -> String {
-    match cached.age {
-        Some(age) if age.as_secs() >= STALE_AFTER_SECONDS => format!(
-            ", which is {} old and probably expired — the feed will likely reject it",
-            humanize(age.as_secs())
-        ),
-        Some(age) => format!(", cached {} ago", humanize(age.as_secs())),
-        None => String::new(),
-    }
-}
+/// Reject a freshly fetched token that is already expired, and say how long a good one
+/// has left.
+///
+/// The route should never hand out an expired token, but trusting that silently would
+/// turn a server-side bug into an unexplained feed rejection.
+fn report_validity(expiry: &Expiry) -> Result<()> {
+    let now = now_unix_seconds()?;
+    let remaining = expiry.remaining_seconds(now);
 
-fn humanize(seconds: u64) -> String {
-    match seconds {
-        0..=119 => format!("{seconds}s"),
-        120..=7199 => format!("{}m", seconds / 60),
-        7200..=172_799 => format!("{}h", seconds / 3600),
-        _ => format!("{}d", seconds / 86_400),
+    if remaining <= EXPIRY_MARGIN_SECONDS {
+        bail!(
+            "the token route returned a token that is already expired or about to be ({} left, {})",
+            humanize(remaining),
+            expiry.source.describe()
+        );
     }
+    println!(
+        "Dhan access token valid for another {} ({}).",
+        humanize(remaining),
+        expiry.source.describe()
+    );
+    Ok(())
 }
 
 /// Request a fresh token from the token route.
-async fn fetch_token(url: &str) -> Result<String> {
+async fn fetch_token(url: &str) -> Result<FetchedToken> {
     let passcode =
         std::env::var("TOKEN_PASSCODE").context("Missing TOKEN_PASSCODE environment variable")?;
 
@@ -111,7 +174,24 @@ async fn fetch_token(url: &str) -> Result<String> {
         bail!("Token fetcher returned HTTP {status}: {reason}");
     }
 
-    serde_json::from_str::<TokenResponse>(&body)
-        .map(|token| token.access_token)
-        .context("Failed to parse token fetcher response")
+    // Kept as a Value first so the reply can be recorded exactly as it arrived, then
+    // read into the typed shape. Deserialising from the Value rather than re-parsing
+    // the text guarantees the two cannot disagree.
+    let response: serde_json::Value =
+        serde_json::from_str(&body).context("Failed to parse token fetcher response as JSON")?;
+    let parsed = serde_json::from_value::<TokenResponse>(response.clone())
+        .context("Failed to read the access token out of the token fetcher response")?;
+    let token = parsed.access_token.trim().to_owned();
+    if token.is_empty() {
+        bail!("token fetcher returned an empty access token");
+    }
+
+    let fetched_at = now_unix_seconds()?;
+    let expiry = resolve(parse_stated_expiry(&parsed.expires_at), &token, fetched_at);
+    Ok(FetchedToken {
+        token,
+        expiry,
+        fetched_at,
+        response,
+    })
 }

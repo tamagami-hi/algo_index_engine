@@ -6,6 +6,18 @@
 //!
 //! The token is stored raw and unencrypted, so the file is created with owner-only
 //! permissions and `data/sessions/` is gitignored.
+//!
+//! `expires_at` is stored alongside it because a cached token has to be checked against
+//! its real expiry, not against the file's timestamp. A file mtime says when we wrote
+//! the token, which is not when Dhan will stop accepting it — and rewriting the file
+//! would reset it. Recording the expiry makes the cache self-contained: it can be
+//! judged without a network call and without trusting the filesystem.
+//!
+//! The token route's reply is also kept VERBATIM under `response`, so the file explains
+//! itself. Reading it answers what the route said, what was derived from it, and when —
+//! without needing this source to interpret. Note that means every field the route
+//! sends lands on disk, including the client name and UCC when pointed at Dhan
+//! directly, which is part of why the file is owner-only and gitignored.
 
 use std::{
     path::{Path, PathBuf},
@@ -16,26 +28,55 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
+use super::expiry::{
+    Expiry, ExpirySource, TOKEN_VALIDITY_SECONDS, format_ist, jwt_expiry,
+};
+
 const SESSION_DIRECTORY: &str = "data/sessions";
 const SESSION_FILE_NAME: &str = "dhan_access_token.json";
 
-/// The session file's contents. One definition, used for both reading and writing, so
-/// the two can never drift apart.
+/// The session file's contents. One definition for reading and writing, so the two
+/// cannot drift apart.
+///
+/// Field order is the order they serialise in, chosen so the file reads top to bottom:
+/// the token, when it dies, where that was learned, when it was fetched, then the raw
+/// reply it all came from.
 #[derive(Debug, Deserialize, Serialize)]
 struct SessionFile {
     access_token: String,
+    /// Unix seconds. Optional so a file written before expiry tracking still loads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<i64>,
+    /// The same instant in IST, for reading by eye.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at_ist: Option<String>,
+    /// Whether the expiry was stated, decoded from the JWT, or assumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expiry_source: Option<ExpirySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fetched_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fetched_at_ist: Option<String>,
+    /// The token route's reply exactly as received, so nothing it said is lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response: Option<serde_json::Value>,
 }
 
-/// A token recovered from disk.
+/// Everything worth recording about a freshly fetched token.
+#[derive(Debug)]
+pub(crate) struct SessionRecord<'token> {
+    pub(crate) access_token: &'token str,
+    pub(crate) expiry: Expiry,
+    pub(crate) fetched_at: i64,
+    /// The route's reply, verbatim.
+    pub(crate) response: Option<serde_json::Value>,
+}
+
+/// A token recovered from disk, with its expiry resolved.
 #[derive(Debug)]
 pub(crate) struct CachedToken {
     pub(crate) token: String,
-    /// How long ago the file was written, when the filesystem can say.
-    ///
-    /// Dhan access tokens expire, so age is the difference between a usable fallback
-    /// and one that will be rejected at the feed handshake. Reported rather than
-    /// enforced: this module does not decide policy, it just says how old the token is.
-    pub(crate) age: Option<Duration>,
+    pub(crate) expiry: Expiry,
 }
 
 fn session_path() -> PathBuf {
@@ -44,8 +85,8 @@ fn session_path() -> PathBuf {
         .join(SESSION_FILE_NAME)
 }
 
-/// Write `access_token` to the session file, replacing any previous one.
-pub(crate) async fn save_token(access_token: &str) -> Result<PathBuf> {
+/// Write the token, its resolved expiry and the raw reply, replacing any previous one.
+pub(crate) async fn save_token(record: SessionRecord<'_>) -> Result<PathBuf> {
     let path = session_path();
     let directory = path
         .parent()
@@ -56,7 +97,13 @@ pub(crate) async fn save_token(access_token: &str) -> Result<PathBuf> {
         .with_context(|| format!("Failed to create session directory: {}", directory.display()))?;
 
     let session = SessionFile {
-        access_token: access_token.to_owned(),
+        access_token: record.access_token.to_owned(),
+        expires_at: Some(record.expiry.at_unix_seconds),
+        expires_at_ist: Some(format_ist(record.expiry.at_unix_seconds)),
+        expiry_source: Some(record.expiry.source),
+        fetched_at: Some(record.fetched_at),
+        fetched_at_ist: Some(format_ist(record.fetched_at)),
+        response: record.response,
     };
     let bytes =
         serde_json::to_vec_pretty(&session).context("Failed to serialize Dhan session file")?;
@@ -73,6 +120,11 @@ pub(crate) async fn save_token(access_token: &str) -> Result<PathBuf> {
 /// A missing file is a normal first-run state, not an error, so it is distinguished
 /// from a file that exists but cannot be read or parsed — that one is a real fault and
 /// is reported.
+///
+/// Expiry is recovered in the same precedence order used when the token was fetched:
+/// the recorded value, then the token's own JWT claim, then 24 hours from the file's
+/// mtime. The last is a genuine last resort for a file written before expiry was
+/// tracked; it is the only case where the filesystem timestamp is consulted at all.
 pub(crate) async fn cached_token() -> Result<Option<CachedToken>> {
     let path = session_path();
 
@@ -92,16 +144,42 @@ pub(crate) async fn cached_token() -> Result<Option<CachedToken>> {
         anyhow::bail!("Session file holds an empty access token: {}", path.display());
     }
 
-    Ok(Some(CachedToken {
-        token,
-        age: file_age(&path).await,
-    }))
+    let expiry = match session.expires_at {
+        Some(at_unix_seconds) => Expiry {
+            at_unix_seconds,
+            source: session.expiry_source.unwrap_or(ExpirySource::Stated),
+        },
+        None => match jwt_expiry(&token) {
+            Some(at_unix_seconds) => Expiry {
+                at_unix_seconds,
+                source: ExpirySource::JwtClaim,
+            },
+            None => Expiry {
+                at_unix_seconds: written_at(&path).await + TOKEN_VALIDITY_SECONDS,
+                source: ExpirySource::Assumed,
+            },
+        },
+    };
+
+    Ok(Some(CachedToken { token, expiry }))
 }
 
-/// How long ago the file was last written, or `None` if the platform cannot say.
-async fn file_age(path: &Path) -> Option<Duration> {
-    let modified = tokio::fs::metadata(path).await.ok()?.modified().ok()?;
-    SystemTime::now().duration_since(modified).ok()
+/// When the file was last written, as Unix seconds, or 0 if unknowable.
+///
+/// 0 makes an undatable legacy file resolve to an expiry in 1970, i.e. expired, which
+/// is the safe direction: it forces a fresh fetch instead of shipping a token of
+/// unknown age to the feed.
+async fn written_at(path: &Path) -> i64 {
+    let Ok(metadata) = tokio::fs::metadata(path).await else {
+        return 0;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return 0;
+    };
+    modified
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs() as i64
 }
 
 /// Creates or truncates the file and writes it, keeping it readable only by its owner
