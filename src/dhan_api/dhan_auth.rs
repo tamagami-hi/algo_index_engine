@@ -20,16 +20,11 @@ pub(crate) async fn get_dhan_credentials() -> Result<DhanCredentials> {
             let url = std::env::var("DHAN_TOKEN_URL")
                 .context("Missing DHAN_TOKEN_URL environment variable")?;
 
-            let token = crate::utils::access_token::get_token(&url)
+            // Caches a fresh token, and falls back to the cached one when the token
+            // route is unreachable.
+            crate::utils::access_token::get_token(&url)
                 .await
-                .context("Failed to fetch DHAN access token")?;
-
-            let session_path = crate::utils::access_token::save_token(&token)
-                .await
-                .context("Failed to save DHAN access token session file")?;
-            println!("Dhan access token saved to {}", session_path.display());
-
-            token
+                .context("Failed to obtain DHAN access token")?
         }
     };
 
