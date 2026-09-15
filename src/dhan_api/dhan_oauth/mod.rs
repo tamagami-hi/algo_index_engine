@@ -1,4 +1,3 @@
-//! Dhan's individual API-key browser consent flow.
 mod browser_callback;
 mod server_callbacks;
 mod session;
@@ -57,7 +56,6 @@ async fn interactive_login(config: &Config) -> Result<DhanSession> {
 }
 
 async fn open_browser(url: &str) {
-    // Invoke the OS opener directly: never interpolate an authentication URL into a shell.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         tokio::process::Command::new("xdg-open")

@@ -35,7 +35,6 @@ async fn isolated_environment_child() {
         assert_eq!(credentials.client_id, "123");
         assert_eq!(credentials.api_key, "test-key");
     } else if mode == "web" {
-        // Missing OAuth configuration fails before reading real cached sessions.
         assert!(
             result
                 .err()

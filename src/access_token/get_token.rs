@@ -8,42 +8,24 @@ use super::expiry::{
 };
 use super::session_file::{SessionRecord, cached_token, save_token};
 
-/// A token this close to expiry is treated as already gone.
-///
-/// Startup reads the instrument master and opens five feed connections, so a token
-/// with seconds left would be accepted here and then rejected mid-handshake. Better to
-/// fail while the reason is still obvious.
 const EXPIRY_MARGIN_SECONDS: i64 = 60;
 const HTTP_TIMEOUT_SECONDS: u64 = 20;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
-/// What the token route returns.
-///
-/// The Cal Spread route sends `access_token` plus `expires_at` (epoch ms), `client_id`
-/// and `login_date`. Dhan's own endpoints — `generateAccessToken`, `consumeApp-consent`
-/// and `partner/consume-consent` — send `accessToken` and `expiryTime` (an ISO stamp in
-/// IST) alongside `dhanClientId`, `dhanClientName`, `dhanClientUcc` and
-/// `givenPowerOfAttorney`.
-///
-/// Both spellings are accepted so `DHAN_TOKEN_URL` can point at either without a code
-/// change. When present, the returned client ID must match `DHAN_CLIENT_ID`.
 #[derive(Deserialize)]
 struct TokenResponse {
     #[serde(alias = "accessToken")]
     access_token: String,
-    /// `expires_at` from the Cal Spread route, `expiryTime` from Dhan.
     #[serde(default, alias = "expiryTime")]
     expires_at: StatedExpiry,
     #[serde(default, alias = "dhanClientId")]
     client_id: Option<String>,
 }
 
-/// A token plus when it stops being usable, and the reply it came from.
 struct FetchedToken {
     token: String,
     expiry: Expiry,
     fetched_at: i64,
-    /// The route's reply, verbatim, for the cache to record.
     response: serde_json::Value,
 }
 
@@ -59,24 +41,10 @@ pub(crate) async fn saved_token() -> Option<String> {
     })
 }
 
-/// Obtain a Dhan access token, falling back to the cached one while it is still valid.
-///
-/// The token route depends on an upstream Dhan session that is not always live — it
-/// answers 409 when the admin has not connected Dhan — and that says nothing about
-/// whether the token we already hold is still good. So a fetch failure is not fatal
-/// while an unexpired cached token exists.
-///
-/// A cached token past its expiry is REFUSED, not used with a warning. Dhan issues
-/// tokens for 24 hours; sending an expired one produces opaque rejections at the feed
-/// handshake, far from the actual cause. Failing here names the cause once.
-///
-/// A freshly fetched token is written to the cache; a token that CAME from the cache is
-/// not written back, since rewriting it would serve no purpose and only churn the file.
 pub(crate) async fn get_token(url: &str) -> Result<String> {
     let fetch_error = match fetch_token(url).await {
         Ok(fetched) => {
             report_validity(&fetched.expiry)?;
-            // A cache write failure must not sink a good token: report and continue.
             let record = SessionRecord {
                 access_token: &fetched.token,
                 expiry: fetched.expiry,
@@ -123,8 +91,6 @@ pub(crate) async fn get_token(url: &str) -> Result<String> {
         Ok(None) => Err(fetch_error).context(
             "no cached Dhan access token to fall back on (data/sessions/dhan_access_token.json does not exist)",
         ),
-        // The cache is unusable AND the fetch failed. Surface the fetch failure as the
-        // cause, since that is the problem to fix, and mention the cache separately.
         Err(cache_error) => {
             eprintln!("Warning: the cached Dhan access token is unusable: {cache_error:#}");
             Err(fetch_error).context("could not fetch a token and the cached one is unusable")
@@ -132,11 +98,6 @@ pub(crate) async fn get_token(url: &str) -> Result<String> {
     }
 }
 
-/// Reject a freshly fetched token that is already expired, and say how long a good one
-/// has left.
-///
-/// The route should never hand out an expired token, but trusting that silently would
-/// turn a server-side bug into an unexplained feed rejection.
 fn report_validity(expiry: &Expiry) -> Result<()> {
     let now = now_unix_seconds()?;
     let remaining = expiry.remaining_seconds(now);
@@ -156,7 +117,6 @@ fn report_validity(expiry: &Expiry) -> Result<()> {
     Ok(())
 }
 
-/// Request a fresh token from the token route.
 async fn fetch_token(url: &str) -> Result<FetchedToken> {
     let passcode =
         std::env::var("TOKEN_PASSCODE").context("Missing TOKEN_PASSCODE environment variable")?;
@@ -203,9 +163,6 @@ async fn fetch_token_with_config(
 }
 
 fn parse_response(body: &[u8], client_id: Option<&str>) -> Result<FetchedToken> {
-    // Kept as a Value first so the reply can be recorded exactly as it arrived, then
-    // read into the typed shape. Deserialising from the Value rather than re-parsing
-    // the text guarantees the two cannot disagree.
     let response: serde_json::Value = serde_json::from_slice(body)
         .map_err(|_| anyhow::anyhow!("Failed to parse token fetcher response as JSON"))?;
     let parsed = serde_json::from_value::<TokenResponse>(response.clone()).map_err(|_| {

@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 pub(super) const EXPIRY_MARGIN_SECONDS: i64 = 60;
 
-/// Credentials deliberately have no Debug implementation.
 pub(crate) struct Config {
     pub(super) client_id: String,
     pub(super) api_key: String,

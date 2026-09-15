@@ -1,4 +1,3 @@
-//! Complete browser-flow contract exercised without contacting Dhan.
 use reqwest::Url;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -70,7 +69,6 @@ async fn complete_browser_consent_persists_and_reuses_matching_session() {
     assert_eq!(credentials.access_token, "test-access-token");
     broker.await.unwrap();
 
-    // The mock broker has shut down: reuse must depend only on the saved session.
     let reused = session::load(&path, &config, now).unwrap().unwrap();
     assert_eq!(reused.access_token, "test-access-token");
     assert_eq!(reused.client_id, "100001");
