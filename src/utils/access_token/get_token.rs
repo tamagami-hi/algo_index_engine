@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::Deserialize;
+use std::time::Duration;
 
 use super::expiry::{
     Expiry, StatedExpiry, humanize, now_unix_seconds, parse_stated_expiry, resolve,
@@ -13,6 +14,8 @@ use super::session_file::{SessionRecord, cached_token, save_token};
 /// with seconds left would be accepted here and then rejected mid-handshake. Better to
 /// fail while the reason is still obvious.
 const EXPIRY_MARGIN_SECONDS: i64 = 60;
+const HTTP_TIMEOUT_SECONDS: u64 = 20;
+const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// What the token route returns.
 ///
@@ -23,8 +26,7 @@ const EXPIRY_MARGIN_SECONDS: i64 = 60;
 /// `givenPowerOfAttorney`.
 ///
 /// Both spellings are accepted so `DHAN_TOKEN_URL` can point at either without a code
-/// change. Only the token and its expiry are used; the identity fields are deliberately
-/// not consumed, since `DHAN_CLIENT_ID` is already configured separately.
+/// change. When present, the returned client ID must match `DHAN_CLIENT_ID`.
 #[derive(Deserialize)]
 struct TokenResponse {
     #[serde(alias = "accessToken")]
@@ -32,13 +34,8 @@ struct TokenResponse {
     /// `expires_at` from the Cal Spread route, `expiryTime` from Dhan.
     #[serde(default, alias = "expiryTime")]
     expires_at: StatedExpiry,
-}
-
-/// Error shape returned by the Cal Spread token route, e.g. a 409 with
-/// `{"authenticated":false,"error":"No live Dhan session..."}`.
-#[derive(Deserialize)]
-struct TokenErrorResponse {
-    error: String,
+    #[serde(default, alias = "dhanClientId")]
+    client_id: Option<String>,
 }
 
 /// A token plus when it stops being usable, and the reply it came from.
@@ -151,39 +148,65 @@ fn report_validity(expiry: &Expiry) -> Result<()> {
 async fn fetch_token(url: &str) -> Result<FetchedToken> {
     let passcode =
         std::env::var("TOKEN_PASSCODE").context("Missing TOKEN_PASSCODE environment variable")?;
+    let client_id = std::env::var("DHAN_CLIENT_ID").ok();
+    fetch_token_with_config(url, &passcode, client_id.as_deref()).await
+}
 
-    let response = Client::new()
+async fn fetch_token_with_config(
+    url: &str,
+    passcode: &str,
+    client_id: Option<&str>,
+) -> Result<FetchedToken> {
+    let url = validate_url(url)?;
+    if passcode.trim().is_empty() || !passcode.bytes().all(|byte| byte.is_ascii_graphic()) {
+        bail!("TOKEN_PASSCODE must be nonempty printable ASCII without whitespace");
+    }
+    let mut response = Client::builder()
+        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECONDS))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| anyhow::anyhow!("Could not initialize token fetcher client"))?
         .get(url)
         .header("x-token-passcode", passcode)
         .send()
         .await
-        .context("Failed to request access token")?;
+        .map_err(|_| anyhow::anyhow!("Failed to request access token"))?;
 
-    // Read the body before failing, so the token service explains *why* it refused
-    // instead of surfacing a bare HTTP status.
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .context("Failed to read token fetcher response")?;
-
     if !status.is_success() {
-        let reason = serde_json::from_str::<TokenErrorResponse>(&body)
-            .map(|parsed| parsed.error)
-            .unwrap_or_else(|_| body.trim().to_owned());
-        bail!("Token fetcher returned HTTP {status}: {reason}");
+        bail!("Token fetcher returned HTTP {}", status.as_u16());
     }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| anyhow::anyhow!("Failed to read token fetcher response"))?
+    {
+        if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
+            bail!("Token fetcher response exceeded the size limit");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    parse_response(&body, client_id)
+}
 
+fn parse_response(body: &[u8], client_id: Option<&str>) -> Result<FetchedToken> {
     // Kept as a Value first so the reply can be recorded exactly as it arrived, then
     // read into the typed shape. Deserialising from the Value rather than re-parsing
     // the text guarantees the two cannot disagree.
-    let response: serde_json::Value =
-        serde_json::from_str(&body).context("Failed to parse token fetcher response as JSON")?;
-    let parsed = serde_json::from_value::<TokenResponse>(response.clone())
-        .context("Failed to read the access token out of the token fetcher response")?;
+    let response: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| anyhow::anyhow!("Failed to parse token fetcher response as JSON"))?;
+    let parsed = serde_json::from_value::<TokenResponse>(response.clone()).map_err(|_| {
+        anyhow::anyhow!("Failed to read the access token out of the token fetcher response")
+    })?;
+    if let (Some(expected), Some(actual)) = (client_id, parsed.client_id.as_deref())
+        && expected != actual
+    {
+        bail!("Token fetcher returned a different Dhan client ID");
+    }
     let token = parsed.access_token.trim().to_owned();
-    if token.is_empty() {
-        bail!("token fetcher returned an empty access token");
+    if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_graphic()) {
+        bail!("Token fetcher returned an invalid access token");
     }
 
     let fetched_at = now_unix_seconds()?;
@@ -195,3 +218,29 @@ async fn fetch_token(url: &str) -> Result<FetchedToken> {
         response,
     })
 }
+
+fn validate_url(input: &str) -> Result<Url> {
+    let url = Url::parse(input).map_err(|_| anyhow::anyhow!("Invalid DHAN_TOKEN_URL"))?;
+    let is_loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if !(url.scheme() == "https" || (url.scheme() == "http" && is_loopback))
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.query_pairs().any(|(key, _)| {
+            matches!(
+                key.to_ascii_lowercase().as_str(),
+                "passcode" | "token_passcode" | "x-token-passcode"
+            )
+        })
+    {
+        bail!(
+            "DHAN_TOKEN_URL must use HTTPS (or loopback HTTP), without credentials, fragment, or passcode query parameters; use TOKEN_PASSCODE for the header"
+        );
+    }
+    Ok(url)
+}
+
+#[cfg(test)]
+#[path = "../../../tests/utils/access_token/get_token.rs"]
+mod tests;

@@ -6,9 +6,7 @@ mod utils;
 use anyhow::Result;
 use configs::env_config::load_env;
 use dhan_api::dhan_auth::get_dhan_credentials;
-use dhan_api::instruments::{
-    ChainUniverse, discovery_plan, ist_today, load_instrument_master,
-};
+use dhan_api::instruments::{ChainUniverse, discovery_plan, ist_today, load_instrument_master};
 use dhan_api::rest_protocol::instrument_dl::download_instrument_master;
 use dhan_api::ws_protocol::dhan_ws::ws_dhan_connection;
 
@@ -16,7 +14,11 @@ use dhan_api::ws_protocol::dhan_ws::ws_dhan_connection;
 async fn main() -> Result<()> {
     load_env()?;
 
-    let credentials = get_dhan_credentials().await?;
+    let credentials = if std::env::args().nth(1).as_deref() == Some("--dhan-login") {
+        dhan_api::dhan_oauth::login().await?
+    } else {
+        get_dhan_credentials().await?
+    };
 
     let instrument_path = download_instrument_master().await?;
     println!(
@@ -24,7 +26,6 @@ async fn main() -> Result<()> {
         instrument_path.display()
     );
 
-    // TODO: get the full instrument master list to subscribe to the websocket.
     let master = load_instrument_master(&instrument_path)?;
     let as_of = ist_today()?;
     let universe = ChainUniverse::build(&master, &as_of)?;
