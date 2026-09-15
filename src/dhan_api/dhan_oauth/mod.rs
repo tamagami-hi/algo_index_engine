@@ -11,7 +11,22 @@ mod flow_tests;
 use super::dhan_auth::DhanCredentials;
 use anyhow::{Context, Result};
 use server_callbacks::{AUTH_BASE, exchange_token, generate_consent};
-use types::{Config, DhanSession};
+use types::{Config, DhanSession, EXPIRY_MARGIN_SECONDS};
+
+pub(crate) fn saved_token(client_id: &str, api_key: &str) -> Option<String> {
+    let session = session::read(&session::path())?;
+    if session.client_id != client_id || session.api_key != api_key {
+        return None;
+    }
+    let remaining = session.expires_at - time::OffsetDateTime::now_utc().unix_timestamp();
+    (remaining > EXPIRY_MARGIN_SECONDS).then(|| {
+        println!(
+            "Reusing the saved Dhan login session, {} minutes left.",
+            remaining / 60
+        );
+        session.access_token
+    })
+}
 
 pub(crate) async fn get_credentials() -> Result<DhanCredentials> {
     let config = Config::from_env()?;

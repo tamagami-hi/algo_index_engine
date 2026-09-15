@@ -60,6 +60,10 @@ pub(super) fn load(path: &Path, config: &Config, now: i64) -> Result<Option<Dhan
     Ok(is_valid.then_some(session))
 }
 
+pub(super) fn read(path: &Path) -> Option<DhanSession> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
 fn reject_symlinks(path: &Path) -> Result<()> {
     for ancestor in path
         .ancestors()

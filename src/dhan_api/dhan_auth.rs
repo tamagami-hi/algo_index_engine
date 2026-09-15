@@ -48,7 +48,19 @@ pub(crate) async fn get_dhan_credentials() -> Result<DhanCredentials> {
         std::env::var("DHAN_CLIENT_ID").context("Missing DHAN_CLIENT_ID environment variable")?;
     let mode = optional_env("DHAN_AUTH_MODE")?;
     let token = optional_env("DHAN_ACCESS_TOKEN")?;
-    let access_token = match select_mode(mode.as_deref(), token.as_deref())? {
+    let mode = select_mode(mode.as_deref(), token.as_deref())?;
+
+    if mode != AuthMode::Manual
+        && let Some(access_token) = saved_token(&client_id, &api_key).await
+    {
+        return Ok(DhanCredentials {
+            client_id,
+            api_key,
+            access_token,
+        });
+    }
+
+    let access_token = match mode {
         AuthMode::Web => return super::dhan_oauth::get_credentials().await,
         AuthMode::Manual => manual_token(token.as_deref()),
         AuthMode::TokenUrl => {
@@ -67,6 +79,13 @@ pub(crate) async fn get_dhan_credentials() -> Result<DhanCredentials> {
         api_key,
         access_token,
     })
+}
+
+async fn saved_token(client_id: &str, api_key: &str) -> Option<String> {
+    match crate::access_token::saved_token().await {
+        Some(token) => Some(token),
+        None => super::dhan_oauth::saved_token(client_id, api_key),
+    }
 }
 
 fn optional_env(name: &str) -> Result<Option<String>> {

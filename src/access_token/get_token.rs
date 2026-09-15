@@ -47,6 +47,18 @@ struct FetchedToken {
     response: serde_json::Value,
 }
 
+pub(crate) async fn saved_token() -> Option<String> {
+    let cached = cached_token().await.ok()??;
+    let remaining = cached.expiry.remaining_seconds(now_unix_seconds().ok()?);
+    (remaining > EXPIRY_MARGIN_SECONDS).then(|| {
+        println!(
+            "Reusing the saved Dhan access token, valid for another {}.",
+            humanize(remaining)
+        );
+        cached.token
+    })
+}
+
 /// Obtain a Dhan access token, falling back to the cached one while it is still valid.
 ///
 /// The token route depends on an upstream Dhan session that is not always live — it
