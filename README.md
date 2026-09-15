@@ -45,7 +45,41 @@ cargo run                  # normal startup
 cargo run -- --dhan-login  # force a fresh browser login
 ```
 
-Configuration lives in `.env` at the manifest root. Copy `.env.example` and fill it in.
+Configuration lives in `.env`. Paths resolve at runtime against `BLACKBOX_HOME`, which
+defaults to the current working directory — so `cargo run` from the repository root finds
+`.env` and `data/` as expected, and a container sets `BLACKBOX_HOME=/app`. A missing
+`.env` is not an error: environment variables injected directly take precedence anyway,
+which is how the container is configured.
+
+## Containers
+
+```sh
+docker compose up --build -d
+docker compose logs -f
+```
+
+The image is a two-stage build on `debian:bookworm-slim`, runs as a non-root user, and
+carries no configuration or market data. `.dockerignore` keeps `.env`, `data/` and
+`target/` out of the build context, so nothing secret is ever baked into a layer.
+
+State lives in the `engine-data` named volume mounted at `/app/data`, holding the dated
+instrument masters and the session file. Use a named volume rather than a bind mount:
+the container runs as uid 10001, and a host bind mount would carry the host's ownership
+and fail to write.
+
+Deploy to AWS `ap-south-1` (Mumbai). Dhan's infrastructure is in Mumbai, and a US region
+adds roughly 200ms round trip, which is longer than the opportunities this strategy is
+looking for.
+
+### Authentication in a container
+
+`web` mode cannot run headless — it shells out to `xdg-open` and waits on a loopback
+callback that nothing can reach. Two workable options:
+
+- `token_url`, the only mode that runs fully unattended.
+- Bootstrap once: run `cargo run -- --dhan-login` locally, then copy
+  `data/sessions/dhan_oauth.json` into the volume. The container reuses it until it
+  expires, which for a Dhan token means within 24 hours.
 
 ## Authentication
 
@@ -88,7 +122,7 @@ filter, so the file and the chains can never disagree about which day it is.
 ```
 src/
   access_token/   token route fetch, expiry resolution, on-disk token cache
-  config.rs       .env loading
+  config.rs       .env loading and BLACKBOX_HOME path resolution
   dhan_api/
     dhan_auth.rs  mode selection and saved-token reuse
     dhan_oauth/   browser consent flow and its session file
@@ -99,4 +133,6 @@ data/
   instruments/    instrument master CSV per date (gitignored)
   sessions/       saved tokens (gitignored, owner-only)
 tests/            mirrors src, for the sensitive areas only
+Dockerfile        two-stage release build
+compose.yaml      engine service and its data volume
 ```

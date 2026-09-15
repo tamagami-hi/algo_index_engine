@@ -1,0 +1,14 @@
+target/
+data/
+.env*
+.git/
+.gitignore
+.venv/
+.idea/
+.vscode/
+.devcontainer/
+docs/
+README.md
+Dockerfile
+.dockerignore
+compose.yaml
