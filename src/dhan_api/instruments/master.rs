@@ -1,7 +1,7 @@
 //! Reading the Dhan instrument master CSV.
 //!
 //! Source: `https://images.dhan.co/api-data/api-scrip-master-detailed.csv`, saved by
-//! `rest_protocol::instrument_dl`. Roughly 200k rows covering every instrument Dhan
+//! `dhan_api::instrument_dl`. Roughly 200k rows covering every instrument Dhan
 //! can trade.
 //!
 //! COLUMNS ARE LOCATED BY NAME, NEVER BY POSITION.

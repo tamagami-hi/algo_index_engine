@@ -1,14 +1,13 @@
-mod configs;
+mod access_token;
+mod config;
 mod dhan_api;
-mod server;
-mod utils;
 
 use anyhow::Result;
-use configs::env_config::load_env;
+use config::load_env;
 use dhan_api::dhan_auth::get_dhan_credentials;
+use dhan_api::dhan_ws::ws_dhan_connection;
+use dhan_api::instrument_dl::download_instrument_master;
 use dhan_api::instruments::{ChainUniverse, discovery_plan, ist_today, load_instrument_master};
-use dhan_api::rest_protocol::instrument_dl::download_instrument_master;
-use dhan_api::ws_protocol::dhan_ws::ws_dhan_connection;
 
 #[tokio::main]
 async fn main() -> Result<()> {

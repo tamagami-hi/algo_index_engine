@@ -242,5 +242,5 @@ fn validate_url(input: &str) -> Result<Url> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/utils/access_token/get_token.rs"]
+#[path = "../../tests/access_token/get_token.rs"]
 mod tests;

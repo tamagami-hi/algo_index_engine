@@ -6,7 +6,7 @@ fn environment_dispatch_is_isolated_and_honors_explicit_modes() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "dhan_api::dhan_oauth::source::tests::isolated_environment_child",
+                "dhan_api::dhan_auth::tests::isolated_environment_child",
             ])
             .env("DHAN_TEST_CHILD", mode)
             .env_remove("DHAN_AUTH_MODE")

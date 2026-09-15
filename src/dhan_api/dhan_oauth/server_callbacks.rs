@@ -1,3 +1,4 @@
+use super::super::dhan_auth::is_valid_token;
 use anyhow::{Result, bail};
 use reqwest::{Client, Response, Url};
 use serde::de::DeserializeOwned;
@@ -7,9 +8,7 @@ use time::{
     macros::format_description,
 };
 
-use super::types::{
-    Config, ConsentResponse, DhanSession, EXPIRY_MARGIN_SECONDS, TokenResponse, is_valid_token,
-};
+use super::types::{Config, ConsentResponse, DhanSession, EXPIRY_MARGIN_SECONDS, TokenResponse};
 
 pub(super) const AUTH_BASE: &str = "https://auth.dhan.co";
 const HTTP_TIMEOUT_SECONDS: u64 = 20;

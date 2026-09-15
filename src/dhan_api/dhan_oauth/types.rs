@@ -1,11 +1,8 @@
+use super::super::dhan_auth::is_valid_token;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub(super) const EXPIRY_MARGIN_SECONDS: i64 = 60;
-
-pub(super) fn is_valid_token(value: &str) -> bool {
-    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_graphic())
-}
 
 /// Credentials deliberately have no Debug implementation.
 pub(crate) struct Config {

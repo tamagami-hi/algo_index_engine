@@ -2,7 +2,6 @@
 mod browser_callback;
 mod server_callbacks;
 mod session;
-pub(crate) mod source;
 mod types;
 
 #[cfg(test)]

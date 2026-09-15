@@ -1,4 +1,5 @@
-use super::types::{Config, DhanSession, EXPIRY_MARGIN_SECONDS, is_valid_token};
+use super::super::dhan_auth::is_valid_token;
+use super::types::{Config, DhanSession, EXPIRY_MARGIN_SECONDS};
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
