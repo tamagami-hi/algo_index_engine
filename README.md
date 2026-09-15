@@ -91,6 +91,13 @@ path authority.
 `.env` on the server is placed and owned by the operator. No script in the pipeline
 reads, writes, chmods or removes it.
 
+## Public site
+
+`https://algogon.xyz` is live, served by Caddy as a second service in the deployed
+stack with automatic Let's Encrypt TLS. Content lives in `web/` and is versioned with
+the release. It is static only — no account, position or strategy data is exposed, and
+the engine has no HTTP surface. See `release_manager/README.md`.
+
 Deploy to AWS `ap-south-1` (Mumbai). Dhan's infrastructure is in Mumbai, and a US region
 adds roughly 200ms round trip, which is longer than the opportunities this strategy is
 looking for.

@@ -125,6 +125,8 @@ bb_deploy_main() {
     bb_prune_rollbacks "${P[rollback_images]}" "${P[keep_releases]}"
     bb_prune_instrument_masters
 
+    bb_check_web
+
     bb_summary "Deployment complete" \
         "stack=${P[stack]}" \
         "environment=${P[environment]}" \

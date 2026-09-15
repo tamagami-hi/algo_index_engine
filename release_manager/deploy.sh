@@ -260,10 +260,22 @@ step "uploading release metadata"
 METADATA=("$BUNDLE/manifest.json" "$BUNDLE/paths.json" "$BUNDLE/checksums.sha256"
           "$BUNDLE/$COMPOSE_NAME" "$BUNDLE/.env.example")
 [[ -f "$BUNDLE/$GUIDE_NAME" ]] && METADATA+=("$BUNDLE/$GUIDE_NAME")
+[[ -f "$BUNDLE/Caddyfile" ]]   && METADATA+=("$BUNDLE/Caddyfile")
 rsync "${RSYNC_OPTS[@]}" -e "$RSYNC_SSH" \
     "${METADATA[@]}" \
     "${BB_SSH_ALIAS}:${REMOTE_DIR}/" \
     || { err "failed to upload release metadata"; exit 1; }
+
+# The served content is versioned with the release. --delete is safe HERE and
+# only here, scoped to the web directory this pipeline wholly owns, so a file
+# removed from the repo stops being served instead of lingering in public.
+if [[ -d "$BUNDLE/web" ]]; then
+    step "uploading web content ($(find "$BUNDLE/web" -type f | wc -l) file(s))"
+    bb_ssh "mkdir -p '$REMOTE_DIR/web'" || { err "cannot create remote web dir"; exit 1; }
+    rsync -az --checksum --delete --chmod=F644,D755 -e "$RSYNC_SSH" \
+        "$BUNDLE/web/" "${BB_SSH_ALIAS}:${REMOTE_DIR}/web/" \
+        || { err "failed to upload web content"; exit 1; }
+fi
 
 step "uploading VPS-native scripts"
 rsync -az --checksum --chmod=F755,D755 -e "$RSYNC_SSH" \

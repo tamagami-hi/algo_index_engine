@@ -49,7 +49,14 @@
   },
   "nginx": {
     "enabled": false,
-    "domain": "algogon.xyz"
+    "note": "superseded by the web section; Caddy runs in the stack"
+  },
+  "web": {
+    "enabled": true,
+    "domain": "algogon.xyz",
+    "root": "/home/ubuntu/blackbox_trage/algo_engine/web",
+    "caddyfile": "/home/ubuntu/blackbox_trage/algo_engine/Caddyfile",
+    "local_probe_url": "http://127.0.0.1:8080/"
   },
   "retention": {
     "keep_releases": 3,

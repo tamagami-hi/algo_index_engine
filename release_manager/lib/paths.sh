@@ -113,4 +113,21 @@ paths_validate() {
     keep="$(paths_get "$file" .retention.keep_releases)" || return 1
     [[ "$keep" =~ ^[0-9]+$ ]] && (( keep >= 1 )) || {
         printf 'retention.keep_releases must be a positive integer\n' >&2; return 1; }
+
+    # The web edge is optional, but if declared it must be fully specified: the
+    # root and Caddyfile are mounted into a container and a wrong path there
+    # silently serves nothing.
+    if [[ "$(paths_get_opt "$file" .web.enabled)" == "true" ]]; then
+        for key in .web.domain .web.root .web.caddyfile .web.local_probe_url; do
+            value="$(paths_get "$file" "$key")" || return 1
+        done
+        for key in .web.root .web.caddyfile; do
+            value="$(paths_get "$file" "$key")" || return 1
+            [[ "$value" == /* ]]     || { printf '%s must be absolute: %s\n' "$key" "$value" >&2; return 1; }
+            [[ "$value" != *".."* ]] || { printf '%s must not contain ..: %s\n' "$key" "$value" >&2; return 1; }
+            [[ "$value" == "$stack_dir"/* ]] || {
+                printf '%s must live under the stack dir so it ships with the release: %s\n' \
+                    "$key" "$value" >&2; return 1; }
+        done
+    fi
 }

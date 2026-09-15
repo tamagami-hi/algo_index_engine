@@ -190,6 +190,25 @@ cp "$STACKS_SRC/_shared/_bb_deploy.sh"   "$BUNDLE/_bb_deploy.sh"
 cp "$STACKS_SRC/_shared/_bb_rollback.sh" "$BUNDLE/_bb_rollback.sh"
 chmod +x "$BUNDLE/$DEPLOY_NAME" "$BUNDLE/$ROLLBACK_NAME"
 
+# The public edge travels with the release, so the served content is versioned
+# with the engine and covered by the same checksum manifest. Caddy itself is a
+# pinned upstream image pulled on the VPS, so nothing is built for it here.
+if [[ "$(jq -r '.web.enabled // false' "$PATHS_FILE")" == "true" ]]; then
+    [[ -f "$STACKS_SRC/$STACK/Caddyfile" ]] \
+        || { err "web is enabled but stacks/$STACK/Caddyfile is missing"; exit 1; }
+    [[ -f "$ROOT_DIR/web/index.html" ]] \
+        || { err "web is enabled but web/index.html is missing"; exit 1; }
+    cp "$STACKS_SRC/$STACK/Caddyfile" "$BUNDLE/Caddyfile"
+    mkdir -p "$BUNDLE/web"
+    # Explicit file types only: never sweep an editor swap file or a stray key
+    # into a directory that gets served to the public internet.
+    find "$ROOT_DIR/web" -maxdepth 1 -type f \
+        \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.svg' \
+           -o -name '*.png' -o -name '*.webp' -o -name '*.ico' -o -name '*.woff2' \) \
+        -exec cp -- {} "$BUNDLE/web/" \;
+    ok "staged Caddyfile and $(find "$BUNDLE/web" -type f | wc -l) web file(s)"
+fi
+
 # paths.json is the hand-edited canonical contract: the sole authority for every
 # path this bundle will use. Copied byte for byte — never generated here.
 cp "$PATHS_FILE" "$BUNDLE/paths.json"

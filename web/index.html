@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ALGOGON</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<main>
+
+  <header class="masthead">
+    <h1>ALGOGON</h1>
+    <p class="sub">Box-spread arbitrage engine &middot; NSE &amp; BSE index and stock options</p>
+  </header>
+
+  <section class="panel" aria-label="Clock">
+    <div class="rows">
+      <div class="row">
+        <span class="key">IST</span>
+        <span class="val" id="ist-time">--:--:--</span>
+      </div>
+      <div class="row">
+        <span class="key">DATE</span>
+        <span class="val" id="ist-date">-------0--</span>
+      </div>
+      <div class="row">
+        <span class="key">SESSION</span>
+        <span class="val" id="session"><span class="dot" id="session-dot"></span><span id="session-text">&mdash;</span></span>
+      </div>
+      <div class="row">
+        <span class="key">NEXT</span>
+        <span class="val dim" id="session-next">&mdash;</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Deployment">
+    <div class="rows">
+      <div class="row"><span class="key">REGION</span><span class="val">ap-south-1 &middot; Mumbai</span></div>
+      <div class="row"><span class="key">BROKER</span><span class="val">DhanHQ v2</span></div>
+      <div class="row"><span class="key">FEED</span><span class="val">WebSocket &middot; binary</span></div>
+      <div class="row"><span class="key">INTERFACE</span><span class="val dim">none public</span></div>
+    </div>
+  </section>
+
+  <section class="note">
+    <p>
+      Private deployment. This page is static and carries no account, position or
+      strategy data. The engine exposes no public interface.
+    </p>
+  </section>
+
+  <footer>
+    <span class="dim">algogon.xyz</span>
+  </footer>
+
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

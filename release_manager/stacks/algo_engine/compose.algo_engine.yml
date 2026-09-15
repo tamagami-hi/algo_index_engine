@@ -1,13 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # The DEPLOYED compose file. Runs on the VPS only.
 #
-# No build: stanza on purpose. The image arrives as a tarball and is loaded by
-# the native deploy script, so a build here would be both impossible (no source
+# No build: stanza on purpose. The engine image arrives as a tarball and is loaded
+# by the native deploy script, so a build here would be both impossible (no source
 # on the VPS) and a way to silently ship something other than what was tested.
 #
 # BB_VERSION is exported by the native deploy script and must resolve to the
 # release being deployed. Compose fails on an unset variable rather than
 # defaulting, so a missing export cannot start the wrong image.
+#
+# The web service is an upstream pinned image, so it is pulled on the VPS rather
+# than shipped in the bundle, and it is not versioned with the engine. Only the
+# content it serves is.
 # ─────────────────────────────────────────────────────────────────────────────
 services:
   engine:
@@ -27,6 +31,34 @@ services:
         max-size: 10m
         max-file: "5"
 
+  web:
+    image: caddy:2.11-alpine
+    container_name: bb-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      # Loopback only. Lets the box verify itself without DNS or a public port.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
 volumes:
   engine-data:
     name: blackbox_engine_data
+  # Holds issued certificates. Must persist, or every redeploy re-requests them
+  # and eventually trips the Let's Encrypt rate limit.
+  caddy-data:
+    name: blackbox_caddy_data
+  caddy-config:
+    name: blackbox_caddy_config

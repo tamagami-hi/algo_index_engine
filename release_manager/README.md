@@ -76,6 +76,34 @@ A failed gate triggers an automatic image-level rollback. That is safe only
 because the engine owns no database; the data volume, holding the session token
 and dated instrument masters, is never touched by a deploy or a rollback.
 
+## The public edge
+
+`algogon.xyz` is served by Caddy, running as a second service in the same stack.
+Static files only: the engine has no HTTP surface, and nothing about the account,
+positions or strategy reaches the page.
+
+- content lives in `web/` at the repo root and is **versioned with the release** —
+  it travels in the bundle and is covered by the same checksum manifest
+- `stacks/algo_engine/Caddyfile` configures the edge, validated by `caddy validate`
+- TLS is automatic via Let's Encrypt; certificates persist in the `caddy-data`
+  volume so a redeploy never re-issues and cannot trip a rate limit
+- `www` redirects to the apex; HTTP redirects to HTTPS
+- the web rsync is the one place `--delete` is used, scoped to the directory this
+  pipeline wholly owns, so a file removed from the repo stops being served
+
+Caddy is a pinned upstream image pulled on the VPS, so it is not in the bundle and
+is not versioned with the engine — only the content it serves is.
+
+`compose.algo_engine.yml` also publishes `127.0.0.1:8080`, serving the same root.
+That is loopback-only and lets the box verify its own edge without DNS, TLS, or an
+open port, which is what `bb_check_web` probes after a deploy. A web failure is a
+warning, never a deploy failure: the engine is the critical service and must not be
+rolled back because a static page is down.
+
+DNS is Namecheap BasicDNS pointing straight at the origin. If it is ever moved
+behind Cloudflare, set the SSL mode to **Full (strict)** — on Flexible, Cloudflare
+speaks HTTP to an origin that redirects to HTTPS, which is an infinite loop.
+
 ## Layout
 
 ```

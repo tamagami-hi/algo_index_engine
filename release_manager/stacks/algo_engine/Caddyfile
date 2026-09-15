@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddyfile — the public edge. Runs on the VPS, in the web container.
+#
+# Automatic HTTPS via Let's Encrypt. It needs the domain to resolve to this box
+# and port 80 reachable from the internet; until both are true Caddy retries
+# issuance on its own, so this file is correct now and simply starts working once
+# the security group allows 80/443. Certificates live in the caddy-data volume, so
+# a redeploy does not re-issue and cannot hit a rate limit.
+#
+# DNS is served by Namecheap BasicDNS straight to this origin — Cloudflare is not
+# in the path — so this box terminates TLS itself and Let's Encrypt is the right
+# choice. If the nameservers are ever moved to Cloudflare, set its SSL mode to
+# "Full (strict)": on "Flexible" Cloudflare speaks plain HTTP to this origin while
+# Caddy redirects HTTP to HTTPS, which is an infinite redirect loop that looks
+# like the site being down and has nothing to do with this file.
+#
+# To use a Cloudflare Origin CA certificate instead — which avoids depending on
+# public DNS for issuance at all — mount the pair and replace automatic HTTPS with:
+#     tls /etc/caddy/origin.pem /etc/caddy/origin.key
+#
+# Serves static files only. No engine data is proxied: the engine has no HTTP
+# surface, and when it grows one it must not be published without authentication.
+# ─────────────────────────────────────────────────────────────────────────────
+
+{
+	admin off
+}
+
+(hardening) {
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Cross-Origin-Opener-Policy same-origin
+		Content-Security-Policy "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	}
+}
+
+algogon.xyz {
+	import hardening
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	encode zstd gzip
+	root * /srv/web
+	file_server
+}
+
+www.algogon.xyz {
+	redir https://algogon.xyz{uri} permanent
+}
+
+# Loopback only, for verifying the stack from the VPS itself without DNS or TLS.
+# Published to 127.0.0.1 in the compose file, so it is never publicly reachable.
+:8080 {
+	import hardening
+	encode zstd gzip
+	root * /srv/web
+	file_server
+}

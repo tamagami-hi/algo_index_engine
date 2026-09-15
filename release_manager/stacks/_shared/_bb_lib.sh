@@ -73,7 +73,10 @@ bb_load_paths() {
           health_settle: (.health.settle_seconds // 20 | tostring),
           health_log_pattern: (.health.log_pattern // ""),
           keep_releases: (.retention.keep_releases | tostring),
-          keep_masters: (.retention.keep_instrument_masters // 0 | tostring)
+          keep_masters: (.retention.keep_instrument_masters // 0 | tostring),
+          web_enabled: (.web.enabled // false | tostring),
+          web_domain: (.web.domain // ""),
+          web_probe: (.web.local_probe_url // "")
         } | to_entries[] | [.key, (.value // "")] | @tsv' "$file")
 
     [[ -n "${P[stack_dir]}" ]] || die "contract has no vps.stack_dir"
@@ -366,8 +369,37 @@ bb_health_http() {
     return 1
 }
 
+# The public edge, checked over loopback so it needs neither DNS nor an open
+# security group. A failure here does not fail the deploy: the engine is the
+# critical service and must not be rolled back because a static page is down.
+bb_check_web() {
+    [[ "${P[web_enabled]}" == "true" ]] || return 0
+    [[ -n "${P[web_probe]}" ]] || return 0
+    require_cmds curl
+
+    local waited=0
+    while (( waited < 20 )); do
+        if curl -fsS -m 3 -o /dev/null "${P[web_probe]}" 2>/dev/null; then
+            ok "web edge serving on ${P[web_probe]}"
+            local tls
+            tls="$("$(docker_bin)" exec bb-web sh -c 'ls /data/caddy/certificates 2>/dev/null | head -1' 2>/dev/null || true)"
+            if [[ -n "$tls" ]]; then
+                ok "TLS certificates present for ${P[web_domain]}"
+            else
+                warn "no TLS certificate yet for ${P[web_domain]}"
+                warn "Let's Encrypt needs inbound :80 — open it in the EC2 security group"
+            fi
+            return 0
+        fi
+        sleep 2
+        waited=$(( waited + 2 ))
+    done
+    warn "web edge did not respond on ${P[web_probe]} within 20s (engine unaffected)"
+    return 0
+}
+
 bb_capture_app_log() {
-    local label="$1" dest
+    local dest
     dest="${P[app_log]}/$(date -u +%Y%m%dT%H%M%SZ)-$label.log"
     mkdir -p "${P[app_log]}" 2>/dev/null || return 0
     "$(docker_bin)" logs --tail 400 "${P[container_prefix]}" > "$dest" 2>&1 || true
