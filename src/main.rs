@@ -19,14 +19,10 @@ async fn main() -> Result<()> {
         get_dhan_credentials().await?
     };
 
-    let instrument_path = download_instrument_master().await?;
-    println!(
-        "Dhan instrument master saved to {}",
-        instrument_path.display()
-    );
+    let as_of = ist_today()?;
+    let instrument_path = download_instrument_master(&as_of).await?;
 
     let master = load_instrument_master(&instrument_path)?;
-    let as_of = ist_today()?;
     let universe = ChainUniverse::build(&master, &as_of)?;
     let discovery = discovery_plan(&universe);
     println!(

@@ -5,9 +5,19 @@ use reqwest::Client;
 
 const INSTRUMENT_MASTER_URL: &str = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv";
 const INSTRUMENT_DIRECTORY: &str = "data/instruments";
-const INSTRUMENT_FILE_NAME: &str = "dhan_instruments.csv";
 
-pub(crate) async fn download_instrument_master() -> Result<PathBuf> {
+pub(crate) async fn download_instrument_master(as_of: &str) -> Result<PathBuf> {
+    let instrument_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(INSTRUMENT_DIRECTORY);
+    let instrument_path = instrument_directory.join(format!("{as_of}.csv"));
+
+    if tokio::fs::try_exists(&instrument_path).await.unwrap_or(false) {
+        println!(
+            "Dhan instrument master for {as_of} already downloaded: {}",
+            instrument_path.display()
+        );
+        return Ok(instrument_path);
+    }
+
     let instrument_data = Client::new()
         .get(INSTRUMENT_MASTER_URL)
         .send()
@@ -19,7 +29,6 @@ pub(crate) async fn download_instrument_master() -> Result<PathBuf> {
         .await
         .context("Failed to read Dhan instrument master response")?;
 
-    let instrument_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(INSTRUMENT_DIRECTORY);
     tokio::fs::create_dir_all(&instrument_directory)
         .await
         .with_context(|| {
@@ -29,7 +38,6 @@ pub(crate) async fn download_instrument_master() -> Result<PathBuf> {
             )
         })?;
 
-    let instrument_path = instrument_directory.join(INSTRUMENT_FILE_NAME);
     tokio::fs::write(&instrument_path, instrument_data)
         .await
         .with_context(|| {
@@ -39,5 +47,9 @@ pub(crate) async fn download_instrument_master() -> Result<PathBuf> {
             )
         })?;
 
+    println!(
+        "Dhan instrument master for {as_of} saved to {}",
+        instrument_path.display()
+    );
     Ok(instrument_path)
 }

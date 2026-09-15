@@ -76,6 +76,13 @@ Register this redirect URL with your Dhan app for `web` mode:
 http://127.0.0.1:8787/dhan/callback
 ```
 
+## Instrument master
+
+The instrument master is saved per date as `data/instruments/<YYYY-MM-DD>.csv`, using
+the IST trading day. If today's file is already there it is reused and no download
+happens, so repeated restarts cost nothing. The same date drives the option-chain expiry
+filter, so the file and the chains can never disagree about which day it is.
+
 ## Layout
 
 ```
@@ -89,7 +96,7 @@ src/
     dhan_ws.rs    live feed socket
     instrument_dl.rs  instrument master download
 data/
-  instruments/    downloaded instrument master CSV (gitignored)
+  instruments/    instrument master CSV per date (gitignored)
   sessions/       saved tokens (gitignored, owner-only)
 tests/            mirrors src, for the sensitive areas only
 ```
