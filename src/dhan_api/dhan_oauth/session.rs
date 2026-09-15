@@ -10,7 +10,7 @@ use std::{
 const MAX_SESSION_BYTES: u64 = 64 * 1024;
 
 pub(super) fn path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/sessions/dhan_oauth.json")
+    crate::config::data_path("data/sessions/dhan_oauth.json")
 }
 
 pub(super) fn save(path: &Path, session: &DhanSession) -> Result<()> {

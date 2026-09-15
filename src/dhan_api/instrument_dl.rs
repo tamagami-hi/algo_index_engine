@@ -7,7 +7,7 @@ const INSTRUMENT_MASTER_URL: &str = "https://images.dhan.co/api-data/api-scrip-m
 const INSTRUMENT_DIRECTORY: &str = "data/instruments";
 
 pub(crate) async fn download_instrument_master(as_of: &str) -> Result<PathBuf> {
-    let instrument_directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(INSTRUMENT_DIRECTORY);
+    let instrument_directory = crate::config::data_path(INSTRUMENT_DIRECTORY);
     let instrument_path = instrument_directory.join(format!("{as_of}.csv"));
 
     if tokio::fs::try_exists(&instrument_path).await.unwrap_or(false) {

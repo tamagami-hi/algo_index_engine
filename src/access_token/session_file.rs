@@ -46,9 +46,7 @@ pub(crate) struct CachedToken {
 }
 
 fn session_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(SESSION_DIRECTORY)
-        .join(SESSION_FILE_NAME)
+    crate::config::data_path(SESSION_DIRECTORY).join(SESSION_FILE_NAME)
 }
 
 pub(crate) async fn save_token(record: SessionRecord<'_>) -> Result<PathBuf> {
