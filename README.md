@@ -19,6 +19,11 @@ This includes `//` comments, `///` and `//!` doc comments, and section-divider b
 
 Existing comments stay unless removing them is requested.
 
+One deliberate exception: the shell scripts under `release_manager/`. Each safety gate
+there encodes a reason that is expensive to rediscover mid-incident, so they carry a
+contract block per file and inline notes on the non-obvious refusals. The Rust source
+stays comment-free.
+
 ### 2. Tests only where it matters
 
 Do not write a test per function or a test file per source file. Test only highly
@@ -66,6 +71,25 @@ State lives in the `engine-data` named volume mounted at `/app/data`, holding th
 instrument masters and the session file. Use a named volume rather than a bind mount:
 the container runs as uid 10001, and a host bind mount would carry the host's ownership
 and fail to write.
+
+## Deployment
+
+`release_manager/` holds the deployment pipeline. See `release_manager/README.md`.
+
+```sh
+./release_manager/provision.sh --engine   # once per host
+./release_manager/export.sh    --engine   # build + stage a bundle
+./release_manager/deploy.sh    --engine   # upload + deploy
+./release_manager/status.sh    --engine   # local vs live
+./release_manager/rollback.sh  --engine --list
+```
+
+Images are built here and shipped as tarballs; the VPS never compiles anything. Every
+remote path comes from `release_manager/stacks/algo_engine/paths.json`, which is the sole
+path authority.
+
+`.env` on the server is placed and owned by the operator. No script in the pipeline
+reads, writes, chmods or removes it.
 
 Deploy to AWS `ap-south-1` (Mumbai). Dhan's infrastructure is in Mumbai, and a US region
 adds roughly 200ms round trip, which is longer than the opportunities this strategy is

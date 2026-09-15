@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# The DEPLOYED compose file. Runs on the VPS only.
+#
+# No build: stanza on purpose. The image arrives as a tarball and is loaded by
+# the native deploy script, so a build here would be both impossible (no source
+# on the VPS) and a way to silently ship something other than what was tested.
+#
+# BB_VERSION is exported by the native deploy script and must resolve to the
+# release being deployed. Compose fails on an unset variable rather than
+# defaulting, so a missing export cannot start the wrong image.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  engine:
+    image: blackbox-engine-engine:${BB_VERSION:?BB_VERSION must be set by the deploy script}
+    container_name: bb-engine
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BLACKBOX_HOME: /app
+    volumes:
+      - engine-data:/app/data
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  engine-data:
+    name: blackbox_engine_data

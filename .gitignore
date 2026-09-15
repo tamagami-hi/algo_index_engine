@@ -26,3 +26,8 @@ Thumbs.db
 
 # Local data: instrument masters and session credentials
 /data/
+
+# Release bundles and the local ship ledger
+/release_manager/build/
+/release_manager/state/*
+!/release_manager/state/.gitkeep
