@@ -24,8 +24,5 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Downloaded market data
-/data/instruments/*.csv
-
-# Fetched session credentials
-/data/sessions/
+# Local data: instrument masters and session credentials
+/data/
