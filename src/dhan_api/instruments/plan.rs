@@ -4,19 +4,13 @@ use anyhow::{Result, bail};
 
 use super::chain::{OptionChain, index_option_chains, select_window};
 use super::master::{ChainKind, InstrumentMaster, UnderlyingKey, to_strike_units};
-use super::segments::ExchangeSegment;
 use super::spot::{SpotInstrument, resolve_spots};
+use super::subscription::Subscription;
 
 pub(crate) const MAX_INSTRUMENTS_PER_CONNECTION: usize = 5_000;
 pub(crate) const MAX_CONNECTIONS: usize = 5;
 pub(crate) const MAX_INSTRUMENTS_PER_ACCOUNT: usize =
     MAX_INSTRUMENTS_PER_CONNECTION * MAX_CONNECTIONS;
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct Subscription {
-    pub(crate) segment: ExchangeSegment,
-    pub(crate) security_id: String,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PlanConfig {

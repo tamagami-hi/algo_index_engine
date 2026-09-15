@@ -6,6 +6,7 @@ pub(crate) mod master;
 pub(crate) mod plan;
 pub(crate) mod segments;
 pub(crate) mod spot;
+pub(crate) mod subscription;
 pub(crate) mod trading_day;
 
 pub(crate) use chain::{OptionChain, StrikeWindow, select_window, should_recentre};
@@ -14,9 +15,13 @@ pub(crate) use master::{
     from_strike_units, load_instrument_master, to_strike_units,
 };
 pub(crate) use plan::{
-    ChainUniverse, MAX_INSTRUMENTS_PER_ACCOUNT, PlanConfig, SelectedChain, SpotRoute, Subscription,
+    ChainUniverse, MAX_INSTRUMENTS_PER_ACCOUNT, PlanConfig, SelectedChain, SpotRoute,
     SubscriptionPlan, build_plan, discovery_plan,
 };
 pub(crate) use segments::ExchangeSegment;
 pub(crate) use spot::SpotInstrument;
+pub(crate) use subscription::{
+    Catalog, CatalogReport, ChainSummary, MAX_CONNECTIONS, MAX_INSTRUMENTS, MAX_PER_CONNECTION,
+    MAX_PER_MESSAGE, Pool, Subscription, build_catalog,
+};
 pub(crate) use trading_day::ist_today;
