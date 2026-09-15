@@ -9,6 +9,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "algo_index_engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "dotenv",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -112,25 +131,6 @@ name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
-
-[[package]]
-name = "blackbox_trage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "dotenv",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "time",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "block-buffer"

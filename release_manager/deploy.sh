@@ -70,7 +70,7 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --engine|engine|algo_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
+        --engine|engine|index_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
         --bundle)      BUNDLE_ARG="${2:-}"; shift 2 ;;
         --ship-only)   SHIP_ONLY=true; shift ;;
         --yes|-y)      ASSUME_YES=true; REMOTE_ARGS+=(--yes); shift ;;

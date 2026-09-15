@@ -1,18 +1,18 @@
-# algo_engine — operator guide
+# index_engine — operator guide
 
 This file lives next to the deployed release on the VPS. Everything here is run
 **on the VPS**, from the stack directory.
 
 ```sh
-cd /home/ubuntu/blackbox_trage/algo_engine
+cd /srv/dev_stack/ALGO_INDEX_ENGINE/index_engine
 ```
 
 ## What is running
 
 ```sh
 jq . engine-version.json          # current, previous, status
-docker compose -p blackbox_engine ps
-docker logs -f bb-engine
+docker compose -p algo_index_engine ps
+docker logs -f aie-engine
 ```
 
 ## Deploy and roll back
@@ -20,15 +20,15 @@ docker logs -f bb-engine
 The operator machine normally drives both. By hand:
 
 ```sh
-./algo_engine_deploy.sh                  # deploy the staged bundle
-./algo_engine_deploy.sh --force          # redeploy the same version
-./algo_engine_deploy.sh --skip-checks    # start without gating on health
+./index_engine_deploy.sh                  # deploy the staged bundle
+./index_engine_deploy.sh --force          # redeploy the same version
+./index_engine_deploy.sh --skip-checks    # start without gating on health
 
-./algo_engine_rollback.sh --list         # what can be restored
-./algo_engine_rollback.sh --to VERSION
+./index_engine_rollback.sh --list         # what can be restored
+./index_engine_rollback.sh --to VERSION
 ```
 
-Deploy and rollback share one lock (`/run/lock/blackbox-algo_engine.lock`), so
+Deploy and rollback share one lock (`/tmp/algo-index-engine.lock`), so
 they can never interleave.
 
 ## Credentials
@@ -49,12 +49,12 @@ unattended running. `manual` works but a Dhan token expires within 24 hours.
 
 ## Data
 
-The named volume `blackbox_engine_data` holds `/app/data`: the Dhan session
+The named volume `algo_index_engine_data` holds `/app/data`: the Dhan session
 token and the dated instrument masters. A rollback never touches it, so the
 session survives and the engine does not need to re-authenticate.
 
 ```sh
-docker run --rm -v blackbox_engine_data:/data alpine:3.22 ls -la /data/instruments
+docker run --rm -v algo_index_engine_data:/data alpine:3.22 ls -la /data/instruments
 ```
 
 Masters accumulate at roughly 34 MiB per trading day. The deploy prunes them to

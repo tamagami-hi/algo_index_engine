@@ -29,7 +29,7 @@ bb_rollback_main() {
     bb_load_paths "$paths_file"
     P[paths_file]="$paths_file"
 
-    printf '\n%s═══ blackbox rollback · %s ═══%s\n' "$_c_bold" "${P[stack]}" "$_c_rst"
+    printf '\n%s═══ algo-index rollback · %s ═══%s\n' "$_c_bold" "${P[stack]}" "$_c_rst"
 
     local current available
     current="$(bb_current_version)"

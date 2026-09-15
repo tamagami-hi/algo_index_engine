@@ -1,6 +1,6 @@
 # release_manager
 
-Deployment pipeline for the `algo_engine` stack. One algo per repository, so this
+Deployment pipeline for the `index_engine` stack. One algo per repository, so this
 folder deploys exactly one thing — and is copied verbatim into the next algo's
 repo, where only `stacks/` needs retargeting.
 
@@ -35,7 +35,7 @@ to stage a release ahead of a market open.
 
 ## paths.json is the only path authority
 
-`stacks/algo_engine/paths.json` owns every path a deployment touches. No script
+`stacks/index_engine/paths.json` owns every path a deployment touches. No script
 derives a remote path; each is read from the contract after validation, so a path
 change is an edit to that one file.
 
@@ -55,7 +55,7 @@ neither overwritten nor removed. The deploy checks only that it *exists*, becaus
 otherwise the container just crash-loops. Only Docker reads it, via `env_file`,
 at container start.
 
-`stacks/algo_engine/.env.example` is reference material and is never copied over
+`stacks/index_engine/.env.example` is reference material and is never copied over
 `.env`.
 
 ## Integrity
@@ -78,31 +78,16 @@ and dated instrument masters, is never touched by a deploy or a rollback.
 
 ## The public edge
 
-`algogon.xyz` is served by Caddy, running as a second service in the same stack.
-Static files only: the engine has no HTTP surface, and nothing about the account,
-positions or strategy reaches the page.
+Not configured for this engine. `web.enabled` is false in the path contract, no
+hostname is assigned, and the deployed compose file runs the engine alone.
 
-- content lives in `web/` at the repo root and is **versioned with the release** —
-  it travels in the bundle and is covered by the same checksum manifest
-- `stacks/algo_engine/Caddyfile` configures the edge, validated by `caddy validate`
-- TLS is automatic via Let's Encrypt; certificates persist in the `caddy-data`
-  volume so a redeploy never re-issues and cannot trip a rate limit
-- `www` redirects to the apex; HTTP redirects to HTTPS
-- the web rsync is the one place `--delete` is used, scoped to the directory this
-  pipeline wholly owns, so a file removed from the repo stops being served
+This host already serves BOE_APP from nginx on 80/443, so a Caddy container here
+would fail to bind and break every deploy. The engine instead publishes its HTTP
+port on loopback only, `127.0.0.1:47601`, matching the convention the other stacks
+on this box follow. If this engine is ever given a hostname, proxy that port from
+the existing host nginx rather than adding a second web server.
 
-Caddy is a pinned upstream image pulled on the VPS, so it is not in the bundle and
-is not versioned with the engine — only the content it serves is.
-
-`compose.algo_engine.yml` also publishes `127.0.0.1:8080`, serving the same root.
-That is loopback-only and lets the box verify its own edge without DNS, TLS, or an
-open port, which is what `bb_check_web` probes after a deploy. A web failure is a
-warning, never a deploy failure: the engine is the critical service and must not be
-rolled back because a static page is down.
-
-DNS is Namecheap BasicDNS pointing straight at the origin. If it is ever moved
-behind Cloudflare, set the SSL mode to **Full (strict)** — on Flexible, Cloudflare
-speaks HTTP to an origin that redirects to HTTPS, which is an infinite loop.
+`/api/stream` has no authentication, so it must not be exposed publicly as-is.
 
 ## Layout
 
@@ -115,7 +100,7 @@ lib/
   version.sh   version labelling, from Cargo.toml
 stacks/
   _shared/     the VPS-native runtime, shared so stacks cannot drift
-  algo_engine/ paths.json, compose, thin entry points, guide, env example
+  index_engine/ paths.json, compose, thin entry points, guide, env example
 build/         staged bundles (gitignored)
 state/         local ship ledger (gitignored)
 ```

@@ -27,12 +27,12 @@ source "$RM_DIR/lib/paths.sh"
 STACK=''
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --engine|engine|algo_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
+        --engine|engine|index_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
         --help|-h) printf 'Usage: ./release_manager/status.sh --engine\n'; exit 0 ;;
         *) err "unknown argument: $1"; exit 1 ;;
     esac
 done
-[[ -n "$STACK" ]] || STACK=algo_engine
+[[ -n "$STACK" ]] || STACK=index_engine
 
 for c in jq git; do command -v "$c" >/dev/null || { err "$c is required"; exit 1; }; done
 

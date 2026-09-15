@@ -1,4 +1,4 @@
-# blackbox_trage
+# algo_index_engine
 
 Box-spread arbitrage engine for Indian equity and index options, using Dhan (DhanHQ v2)
 for authentication, the instrument master, and the live market feed.
@@ -85,7 +85,7 @@ and fail to write.
 ```
 
 Images are built here and shipped as tarballs; the VPS never compiles anything. Every
-remote path comes from `release_manager/stacks/algo_engine/paths.json`, which is the sole
+remote path comes from `release_manager/stacks/index_engine/paths.json`, which is the sole
 path authority.
 
 `.env` on the server is placed and owned by the operator. No script in the pipeline
@@ -93,7 +93,7 @@ reads, writes, chmods or removes it.
 
 ## Public site
 
-`https://algogon.xyz` is live, served by Caddy as a second service in the deployed
+The public site is not configured for this engine yet: `web.enabled` is false in the path contract and no hostname is assigned.
 stack with automatic Let's Encrypt TLS. Content lives in `web/` and is versioned with
 the release. It is static only — no account, position or strategy data is exposed, and
 the engine has no HTTP surface. See `release_manager/README.md`.

@@ -260,7 +260,7 @@ bb_archive_current_images() {
     local dest="$1" version="$2" key archive tag
     bb_assert_writable "$dest"
     while IFS=$'\t' read -r key archive; do
-        tag="blackbox-${P[short]}-${key}:${version}"
+        tag="algo-index-${key}:${version}"
         if ! "$(docker_bin)" image inspect "$tag" >/dev/null 2>&1; then
             warn "running image $tag not present locally — cannot archive it"
             continue
@@ -294,7 +294,7 @@ bb_load_images() {
 bb_assert_images_present() {
     local version="$1" key archive tag
     while IFS=$'\t' read -r key archive; do
-        tag="blackbox-${P[short]}-${key}:${version}"
+        tag="algo-index-${key}:${version}"
         "$(docker_bin)" image inspect "$tag" >/dev/null 2>&1 \
             || die "image $tag is not present after load"
     done < <(bb_images)

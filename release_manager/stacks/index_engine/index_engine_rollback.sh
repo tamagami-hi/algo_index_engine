@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# algo_engine_rollback.sh — VPS-native rollback entry point.
+# index_engine_rollback.sh — VPS-native rollback entry point.
 #
 # Runs ON THE VPS, in the stack directory:
 #
-#     ssh algo_engine 'cd /home/ubuntu/blackbox_trage/algo_engine && ./algo_engine_rollback.sh --list'
+#     ssh beonedge 'cd /srv/dev_stack/ALGO_INDEX_ENGINE/index_engine && ./index_engine_rollback.sh --list'
 #
 # All logic is shared. This file declares identity only.
 # ─────────────────────────────────────────────────────────────────────────────

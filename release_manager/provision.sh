@@ -28,7 +28,7 @@ source "$RM_DIR/lib/paths.sh"
 STACK=''
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --engine|engine|algo_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
+        --engine|engine|index_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
         --help|-h) printf 'Usage: ./release_manager/provision.sh --engine\n'; exit 0 ;;
         *) err "unknown argument: $1"; exit 1 ;;
     esac

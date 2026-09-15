@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# algo_engine_deploy.sh — VPS-native deploy entry point.
+# index_engine_deploy.sh — VPS-native deploy entry point.
 #
 # Runs ON THE VPS, in the stack directory. Invoked either by the operator
 # machine (release_manager/deploy.sh --engine) or by hand:
 #
-#     ssh algo_engine 'cd /home/ubuntu/blackbox_trage/algo_engine && ./algo_engine_deploy.sh'
+#     ssh beonedge 'cd /srv/dev_stack/ALGO_INDEX_ENGINE/index_engine && ./index_engine_deploy.sh'
 #
 # All logic is shared. This file declares identity and policy only.
 #

@@ -9,7 +9,7 @@ COPY tests ./tests
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release \
-    && install -Dm755 target/release/blackbox_trage /out/blackbox_trage
+    && install -Dm755 target/release/algo_index_engine /out/algo_index_engine
 
 FROM debian:bookworm-slim
 
@@ -19,7 +19,7 @@ RUN apt-get update \
 
 RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin blackbox
 
-COPY --from=build /out/blackbox_trage /usr/local/bin/blackbox_trage
+COPY --from=build /out/algo_index_engine /usr/local/bin/algo_index_engine
 
 ENV BLACKBOX_HOME=/app \
     TZ=Asia/Kolkata
@@ -29,4 +29,4 @@ RUN mkdir -p /app/data && chown -R blackbox:blackbox /app
 
 USER blackbox
 
-ENTRYPOINT ["/usr/local/bin/blackbox_trage"]
+ENTRYPOINT ["/usr/local/bin/algo_index_engine"]

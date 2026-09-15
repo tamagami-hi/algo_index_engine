@@ -59,7 +59,7 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --engine|engine|algo_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
+        --engine|engine|index_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
         --skip-build) SKIP_BUILD=true; shift ;;
         --keep)
             [[ $# -ge 2 && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]] \
@@ -141,7 +141,7 @@ fi
 # a missing binary — anything else means the image is broken regardless of .env.
 section "RUNTIME ACCEPTANCE"
 step "image starts and reports missing configuration"
-ACCEPT_OUT="$(docker run --rm --entrypoint /usr/local/bin/blackbox_trage "$IMAGE_TAG" 2>&1 || true)"
+ACCEPT_OUT="$(docker run --rm --entrypoint /usr/local/bin/algo_index_engine "$IMAGE_TAG" 2>&1 || true)"
 if printf '%s' "$ACCEPT_OUT" | grep -q 'Missing DHAN_API_KEY'; then
     ok "runtime path resolution and env handling behave as expected"
 else

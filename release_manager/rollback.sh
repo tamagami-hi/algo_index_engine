@@ -43,7 +43,7 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --engine|engine|algo_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
+        --engine|engine|index_engine) STACK="$(resolve_stack "$1")" || exit 1; shift ;;
         --list)        REMOTE_ARGS+=(--list); shift ;;
         --to)          REMOTE_ARGS+=(--to "${2:-}"); shift 2 ;;
         --yes|-y)      REMOTE_ARGS+=(--yes); shift ;;

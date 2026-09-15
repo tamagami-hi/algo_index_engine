@@ -30,7 +30,7 @@ bb_deploy_main() {
     bb_load_paths "$paths_file"
     P[paths_file]="$paths_file"
 
-    printf '\n%s═══ blackbox deploy · %s (%s) ═══%s\n' \
+    printf '\n%s═══ algo-index deploy · %s (%s) ═══%s\n' \
         "$_c_bold" "${P[stack]}" "${P[environment]}" "$_c_rst"
 
     step "1/12 acquire deployment lock"

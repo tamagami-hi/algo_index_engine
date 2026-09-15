@@ -14,9 +14,9 @@
 # lookup table is cheaper to retarget than scattered literals.
 # ─────────────────────────────────────────────────────────────────────────────
 
-BB_SSH_ALIAS="${BB_SSH_ALIAS:-algo_engine}"
+BB_SSH_ALIAS="${BB_SSH_ALIAS:-beonedge}"
 
-BB_STACKS=(algo_engine)
+BB_STACKS=(index_engine)
 
 # stack_attr <stack> <attr> — echo one non-path attribute, or return 1.
 #
@@ -33,17 +33,17 @@ BB_STACKS=(algo_engine)
 stack_attr() {
     local stack="$1" attr="$2"
     case "$stack" in
-        algo_engine)
+        index_engine)
             case "$attr" in
                 env)          printf 'production\n' ;;
-                short)        printf 'engine\n' ;;
-                compose)      printf 'compose.algo_engine.yml\n' ;;
-                version_file) printf 'engine-version.json\n' ;;
-                deploy)       printf 'algo_engine_deploy.sh\n' ;;
-                rollback)     printf 'algo_engine_rollback.sh\n' ;;
+                short)        printf 'index\n' ;;
+                compose)      printf 'compose.index_engine.yml\n' ;;
+                version_file) printf 'index-engine-version.json\n' ;;
+                deploy)       printf 'index_engine_deploy.sh\n' ;;
+                rollback)     printf 'index_engine_rollback.sh\n' ;;
                 guide)        printf 'ENGINE_GUIDE.md\n' ;;
-                prefix)       printf 'bb-engine\n' ;;
-                project)      printf 'blackbox_engine\n' ;;
+                prefix)       printf 'aie-engine\n' ;;
+                project)      printf 'algo_index_engine\n' ;;
                 keep)         printf '3\n' ;;
                 *) return 1 ;;
             esac ;;
@@ -59,7 +59,7 @@ is_stack() {
 
 resolve_stack() {
     case "${1:-}" in
-        --engine|engine|algo_engine) printf 'algo_engine\n' ;;
+        --engine|engine|index_engine) printf 'index_engine\n' ;;
         *) printf 'Unknown stack selector: %s\n' "${1:-<empty>}" >&2
            printf 'Expected: --engine\n' >&2
            return 1 ;;
@@ -72,7 +72,7 @@ resolve_stack() {
 # is no separate frontend or database image to build.
 stack_images() {
     case "$1" in
-        algo_engine) printf 'engine:engine.tar.gz\n' ;;
+        index_engine) printf 'engine:engine.tar.gz\n' ;;
         *) return 1 ;;
     esac
 }
@@ -81,7 +81,7 @@ stack_images() {
 stack_image_tag() {
     local stack="$1" key="$2" version="$3" short
     short="$(stack_attr "$stack" short)" || return 1
-    printf 'blackbox-%s-%s:%s\n' "$short" "$key" "$version"
+    printf 'algo-index-%s:%s\n' "$key" "$version"
 }
 
 # ── ssh plumbing ────────────────────────────────────────────────────────────
