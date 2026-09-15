@@ -11,6 +11,19 @@ pub(crate) const MAX_PER_CONNECTION: usize = 5_000;
 pub(crate) const MAX_CONNECTIONS: usize = 5;
 pub(crate) const MAX_INSTRUMENTS: usize = MAX_PER_CONNECTION * MAX_CONNECTIONS;
 
+const EXCLUDED_INDEX_CHAINS: &[(ExchangeSegment, &str)] = &[
+    (ExchangeSegment::BseFno, "SENSEX50"),
+    (ExchangeSegment::McxComm, "MCXBULLDEX"),
+];
+
+fn is_excluded(segment: ExchangeSegment, symbol: &str) -> bool {
+    EXCLUDED_INDEX_CHAINS
+        .iter()
+        .any(|(excluded_segment, excluded_symbol)| {
+            *excluded_segment == segment && *excluded_symbol == symbol
+        })
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Subscription {
     pub(crate) segment: ExchangeSegment,
@@ -62,6 +75,7 @@ pub(crate) struct CatalogReport {
     pub(crate) spot_index_future: usize,
     pub(crate) unresolved: Vec<UnderlyingKey>,
     pub(crate) index_chains: Vec<ChainSummary>,
+    pub(crate) excluded_index_chains: Vec<ChainSummary>,
 }
 
 #[derive(Clone, Debug)]
@@ -129,9 +143,19 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
     let selected = front_index_contracts(master, as_of, &front);
 
     let mut counts: BTreeMap<(UnderlyingKey, String), usize> = BTreeMap::new();
+    let mut excluded_counts: BTreeMap<(UnderlyingKey, String), usize> = BTreeMap::new();
     let mut option_seen: BTreeSet<Subscription> = BTreeSet::new();
     let mut option_instruments = Vec::with_capacity(selected.len());
     for contract in selected {
+        let key = UnderlyingKey::new(contract.segment, contract.underlying_symbol.as_str());
+
+        if is_excluded(contract.segment, contract.underlying_symbol.as_str()) {
+            *excluded_counts
+                .entry((key, contract.expiry.clone()))
+                .or_insert(0) += 1;
+            continue;
+        }
+
         let subscription = Subscription {
             segment: contract.segment,
             security_id: contract.security_id.clone(),
@@ -140,18 +164,21 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
             continue;
         }
         option_instruments.push(subscription);
-        let key = UnderlyingKey::new(contract.segment, contract.underlying_symbol.as_str());
         *counts.entry((key, contract.expiry.clone())).or_insert(0) += 1;
     }
 
-    let index_chains = counts
-        .into_iter()
-        .map(|((underlying, expiry), contracts)| ChainSummary {
-            underlying,
-            expiry,
-            contracts,
-        })
-        .collect();
+    let summarise = |counts: BTreeMap<(UnderlyingKey, String), usize>| -> Vec<ChainSummary> {
+        counts
+            .into_iter()
+            .map(|((underlying, expiry), contracts)| ChainSummary {
+                underlying,
+                expiry,
+                contracts,
+            })
+            .collect()
+    };
+    let index_chains = summarise(counts);
+    let excluded_index_chains = summarise(excluded_counts);
 
     let catalog = Catalog {
         spot: Pool {
@@ -171,6 +198,7 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
             spot_index_future,
             unresolved: resolution.unresolved,
             index_chains,
+            excluded_index_chains,
         },
     };
 

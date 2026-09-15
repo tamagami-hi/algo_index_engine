@@ -244,3 +244,128 @@ fn only_the_front_expiry_is_subscribed_per_underlying() {
     );
     assert!(chains.iter().all(|c| c.contracts == 1));
 }
+
+#[test]
+fn spot_is_never_subscribed_for_an_underlying_with_no_option_chain() {
+    let options = vec![
+        option(
+            ExchangeSegment::NseFno,
+            "NIFTY",
+            "2026-09-29",
+            2_400_000_000,
+            OptionType::Call,
+            ChainKind::Index,
+            "nifty-ce",
+        ),
+        option(
+            ExchangeSegment::NseFno,
+            "RELIANCE",
+            "2026-09-29",
+            140_000_000,
+            OptionType::Call,
+            ChainKind::Stock,
+            "reliance-ce",
+        ),
+    ];
+    let spots = vec![
+        nifty_spot(),
+        spot(
+            ExchangeSegment::NseEq,
+            "NSE",
+            "RELIANCE",
+            "2885",
+            SpotKind::Equity,
+        ),
+        spot(
+            ExchangeSegment::IdxI,
+            "BSE",
+            "SENSEX",
+            "51",
+            SpotKind::Index,
+        ),
+        spot(ExchangeSegment::NseEq, "NSE", "TCS", "11536", SpotKind::Equity),
+        spot(
+            ExchangeSegment::NseEq,
+            "NSE",
+            "SOMESMALLCAP",
+            "99999",
+            SpotKind::Equity,
+        ),
+    ];
+
+    let catalog = build_catalog(&master(options, spots), AS_OF).unwrap();
+    let subscribed = ids(&catalog.spot);
+
+    assert_eq!(
+        subscribed.len(),
+        2,
+        "only underlyings that carry an option chain earn a spot subscription"
+    );
+    assert!(subscribed.contains(&"13"), "NIFTY has a chain");
+    assert!(subscribed.contains(&"2885"), "RELIANCE has a chain");
+    assert!(!subscribed.contains(&"51"), "SENSEX has no chain here");
+    assert!(!subscribed.contains(&"11536"), "TCS has no chain here");
+    assert!(!subscribed.contains(&"99999"), "a non-F&O equity must never appear");
+    assert_eq!(catalog.report.spot_index, 1);
+    assert_eq!(catalog.report.spot_equity, 1);
+}
+
+#[test]
+fn excluded_index_chains_are_reported_and_never_subscribed() {
+    let options = vec![
+        option(
+            ExchangeSegment::BseFno,
+            "SENSEX",
+            "2026-09-17",
+            8_460_000_000,
+            OptionType::Put,
+            ChainKind::Index,
+            "sensex-keep",
+        ),
+        option(
+            ExchangeSegment::BseFno,
+            "SENSEX50",
+            "2026-09-24",
+            2_680_000_000,
+            OptionType::Call,
+            ChainKind::Index,
+            "sensex50-drop-a",
+        ),
+        option(
+            ExchangeSegment::BseFno,
+            "SENSEX50",
+            "2026-09-24",
+            2_690_000_000,
+            OptionType::Put,
+            ChainKind::Index,
+            "sensex50-drop-b",
+        ),
+    ];
+    let spots = vec![
+        spot(ExchangeSegment::IdxI, "BSE", "SENSEX", "51", SpotKind::Index),
+        spot(
+            ExchangeSegment::IdxI,
+            "BSE",
+            "SENSEX50",
+            "68",
+            SpotKind::Index,
+        ),
+    ];
+
+    let catalog = build_catalog(&master(options, spots), AS_OF).unwrap();
+
+    let selected = ids(&catalog.index_options);
+    assert_eq!(selected, vec!["sensex-keep"]);
+    assert!(!selected.contains(&"sensex50-drop-a"));
+    assert!(!selected.contains(&"sensex50-drop-b"));
+
+    let excluded = &catalog.report.excluded_index_chains;
+    assert_eq!(excluded.len(), 1, "the exclusion must be reported, not silent");
+    assert_eq!(excluded[0].underlying.symbol, "SENSEX50");
+    assert_eq!(excluded[0].contracts, 2);
+
+    assert!(
+        ids(&catalog.spot).contains(&"68"),
+        "an excluded chain keeps its spot: every index spot is mandatory"
+    );
+}
