@@ -29,6 +29,7 @@ bb_rollback_main() {
     bb_load_paths "$paths_file"
     P[paths_file]="$paths_file"
 
+    # shellcheck disable=SC2154 # Colours are provided by _bb_lib.sh.
     printf '\n%s═══ algo-index rollback · %s ═══%s\n' "$_c_bold" "${P[stack]}" "$_c_rst"
 
     local current available
@@ -79,8 +80,8 @@ bb_rollback_main() {
     fi
 
     step "3/6 load the archived images"
-    local key archive path
-    while IFS=$'\t' read -r key archive; do
+    local _key archive path
+    while IFS=$'\t' read -r _key archive; do
         path="$rb/$archive"
         [[ -f "$path" ]] || die "rollback archive is missing $archive"
         gzip -dc "$path" | "$(docker_bin)" image load >/dev/null \
@@ -97,6 +98,7 @@ bb_rollback_main() {
     fi
 
     step "5/6 start the restored release"
+    # shellcheck disable=SC2034 # Consumed by compose in _bb_lib.sh.
     BB_VERSION_FOR_COMPOSE="$TARGET"
     bb_validate_compose
     compose up -d --remove-orphans || die "failed to start the restored release"

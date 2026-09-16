@@ -79,8 +79,8 @@ stack_images() {
 
 # stack_image_tag <stack> <key> <version> — the fully qualified local image tag.
 stack_image_tag() {
-    local stack="$1" key="$2" version="$3" short
-    short="$(stack_attr "$stack" short)" || return 1
+    local stack="$1" key="$2" version="$3"
+    stack_attr "$stack" short >/dev/null || return 1
     printf 'algo-index-%s:%s\n' "$key" "$version"
 }
 

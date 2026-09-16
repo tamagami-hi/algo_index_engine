@@ -103,6 +103,7 @@ declare -A P=()
 # shellcheck source=/dev/null
 source "$SHARED/_bb_lib.sh"
 bb_load_paths "$STACK_DIR/paths.json"
+# shellcheck disable=SC2034 # Consumed by the sourced deployment library.
 P[paths_file]="$STACK_DIR/paths.json"
 
 # Defined after sourcing on purpose: the library declares its own compose helper,

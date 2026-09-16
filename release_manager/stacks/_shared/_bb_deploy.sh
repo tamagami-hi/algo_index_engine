@@ -30,6 +30,7 @@ bb_deploy_main() {
     bb_load_paths "$paths_file"
     P[paths_file]="$paths_file"
 
+    # shellcheck disable=SC2154 # Colours are provided by _bb_lib.sh.
     printf '\n%s═══ algo-index deploy · %s (%s) ═══%s\n' \
         "$_c_bold" "${P[stack]}" "${P[environment]}" "$_c_rst"
 
@@ -70,6 +71,7 @@ bb_deploy_main() {
     step "7/12 verify docker and environment"
     bb_assert_docker
     bb_assert_env
+    # shellcheck disable=SC2034 # Consumed by compose in _bb_lib.sh.
     BB_VERSION_FOR_COMPOSE="$incoming"
     bb_validate_compose
     bb_assert_loopback_only
@@ -179,8 +181,8 @@ bb_deploy_fail() {
     step "AUTO-ROLLBACK to $previous"
     bb_rollback_verify "$rb"
 
-    local key archive path
-    while IFS=$'\t' read -r key archive; do
+    local _key archive path
+    while IFS=$'\t' read -r _key archive; do
         path="$rb/$archive"
         if [[ ! -f "$path" ]]; then
             bb_write_version "$previous" "" failed "$attempted"
@@ -195,6 +197,7 @@ bb_deploy_fail() {
 
     [[ -f "$rb/${P[compose_name]}" ]] && cp "$rb/${P[compose_name]}" "${P[compose_file]}"
 
+    # shellcheck disable=SC2034 # Consumed by compose in _bb_lib.sh.
     BB_VERSION_FOR_COMPOSE="$previous"
     if compose up -d --remove-orphans >/dev/null 2>&1 && bb_health_gate; then
         bb_write_version "$previous" "$attempted" rolled-back

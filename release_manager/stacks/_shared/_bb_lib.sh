@@ -563,7 +563,7 @@ bb_check_web() {
 }
 
 bb_capture_app_log() {
-    local dest
+    local label="$1" dest
     dest="${P[app_log]}/$(date -u +%Y%m%dT%H%M%SZ)-$label.log"
     mkdir -p "${P[app_log]}" 2>/dev/null || return 0
     "$(docker_bin)" logs --tail 400 "${P[container_prefix]}" > "$dest" 2>&1 || true
@@ -583,7 +583,7 @@ bb_prune_rollbacks() {
     (( count > keep )) || return 0
     while IFS= read -r victim; do
         [[ -n "$victim" ]] || continue
-        rm -rf -- "$dir/$victim" && info "pruned rollback $victim"
+        rm -rf -- "${dir:?}/${victim:?}" && info "pruned rollback $victim"
     done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
              | sort | head -n $(( count - keep )))
 }

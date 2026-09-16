@@ -265,7 +265,7 @@ ok "manifest.json and checksums.sha256 written"
 mapfile -t old < <(bundle_dirs_oldest_first "$BUILD_DIR/$STACK")
 if (( ${#old[@]} > KEEP_BUNDLES )); then
     for v in "${old[@]:0:$(( ${#old[@]} - KEEP_BUNDLES ))}"; do
-        rm -rf -- "$BUILD_DIR/$STACK/$v" && info "pruned old bundle $v"
+        rm -rf -- "${BUILD_DIR:?}/${STACK:?}/${v:?}" && info "pruned old bundle $v"
     done
 fi
 

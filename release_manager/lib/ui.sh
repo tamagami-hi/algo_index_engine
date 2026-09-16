@@ -12,6 +12,7 @@ else
     c_rst=''; c_bold=''; c_dim=''; c_red=''; c_grn=''; c_ylw=''; c_cyn=''
     UI_INTERACTIVE=false
 fi
+# shellcheck disable=SC2034 # Consumed by deployment entrypoints.
 [[ -t 0 ]] || UI_INTERACTIVE=false
 
 banner()  { printf '\n%s══ %s ══%s\n\n' "$c_bold" "$1" "$c_rst"; }

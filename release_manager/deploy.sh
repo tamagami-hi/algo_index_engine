@@ -250,7 +250,7 @@ section "4/6  UPLOAD"
 # hard guarantee that this pipeline never writes the operator's credentials;
 # combined with no --delete, .env can be neither overwritten nor removed.
 RSYNC_OPTS=(-az --checksum --human-readable --partial
-            --chmod=F644,D755 --exclude='/.env')
+            '--chmod=F644,D755' --exclude='/.env')
 bb_ssh_opts
 printf -v RSYNC_SSH '%q ' ssh "${BB_SSH_OPTS[@]}"
 
@@ -312,12 +312,12 @@ REMOTE
 )"
 printf '%s\n' "$SNAPSHOT" | sed 's/^/   /'
 case "$SNAPSHOT" in
-    *snapshot=archived*|*snapshot=already-archived*|*snapshot=first-deploy*)
-        ok "outgoing configuration preserved" ;;
     *snapshot=archived-differs*)
         err "the archived compose for the running release differs from the live one"
         err "refusing to deploy: rolling back would restore a configuration that never ran"
         exit 1 ;;
+    *snapshot=archived*|*snapshot=already-archived*|*snapshot=first-deploy*)
+        ok "outgoing configuration preserved" ;;
     *)
         err "could not preserve the outgoing release configuration"
         err "refusing to deploy: a rollback bundle would pair an old image with new config"
@@ -342,7 +342,7 @@ rsync "${RSYNC_OPTS[@]}" -e "$RSYNC_SSH" \
 if [[ -d "$BUNDLE/web" ]]; then
     step "uploading web content ($(find "$BUNDLE/web" -type f | wc -l) file(s))"
     bb_ssh "mkdir -p '$REMOTE_DIR/web'" || { err "cannot create remote web dir"; exit 1; }
-    rsync -az --checksum --delete --chmod=F644,D755 -e "$RSYNC_SSH" \
+    rsync -az --checksum --delete '--chmod=F644,D755' -e "$RSYNC_SSH" \
         "$BUNDLE/web/" "${BB_SSH_ALIAS}:${REMOTE_DIR}/web/" \
         || { err "failed to upload web content"; exit 1; }
 fi
