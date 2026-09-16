@@ -106,6 +106,16 @@ impl Catalog {
         self.spot.message_count() + self.index_options.message_count()
     }
 
+    /// The first chain whose expiry is already behind `as_of`. A catalog holding
+    /// one is describing a contract that no longer trades and must be rebuilt.
+    pub(crate) fn stale_expiry(&self, as_of: &str) -> Option<(&str, &str)> {
+        self.report
+            .index_chains
+            .iter()
+            .find(|chain| chain.expiry.as_str() < as_of)
+            .map(|chain| (chain.underlying.symbol.as_str(), chain.expiry.as_str()))
+    }
+
     pub(crate) fn spare_capacity(&self) -> usize {
         MAX_INSTRUMENTS.saturating_sub(self.len())
     }

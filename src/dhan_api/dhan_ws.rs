@@ -4,11 +4,12 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use super::feed::{Packet, decode_frame};
-use super::instruments::{Catalog, Pool, Subscription};
+use super::instruments::{Catalog, Pool, Subscription, ist_today};
 use crate::server::state::EngineState;
 
 const DHAN_WEBSOCKET_URL: &str = "wss://api-feed.dhan.co/";
 const SUBSCRIBE_FULL: u32 = 21;
+const ROLL_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn subscribe_message(batch: &[Subscription]) -> String {
     let instruments: Vec<serde_json::Value> = batch
@@ -49,6 +50,7 @@ pub(crate) async fn ws_dhan_connection(
     client_id: &str,
     access_token: &str,
     catalog: &Catalog,
+    as_of: &str,
     state: &EngineState,
     shutdown: &CancellationToken,
 ) -> Result<()> {
@@ -77,11 +79,26 @@ pub(crate) async fn ws_dhan_connection(
     state.feed_subscribed(subscribed);
 
     let mut cancelled = false;
+    let mut roll_check = tokio::time::interval(ROLL_CHECK);
+    roll_check.tick().await;
+
     loop {
         let next = tokio::select! {
             () = shutdown.cancelled() => {
                 cancelled = true;
                 None
+            }
+            _ = roll_check.tick() => {
+                // The socket can stay up across midnight. Without this the engine
+                // would never re-enter its cycle and would keep streaming an
+                // expiry that has already passed.
+                match ist_today() {
+                    Ok(today) if today != as_of => {
+                        println!("trading day rolled from {as_of} to {today}; reloading the universe");
+                        None
+                    }
+                    _ => continue,
+                }
             }
             message = ws_stream.next() => message,
         };

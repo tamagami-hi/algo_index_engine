@@ -67,8 +67,10 @@ async fn cycle(
     };
 
     let as_of = ist_today()?;
-    if loaded.as_ref().map(|(day, _)| day.as_str()) != Some(as_of.as_str()) {
-        engine.set_phase(Phase::LoadingInstruments, format!("trading day {as_of}"));
+    let reason = reload_reason(loaded.as_ref(), &as_of);
+    if let Some(reason) = reason {
+        engine.set_phase(Phase::LoadingInstruments, reason.clone());
+        println!("loading the universe: {reason}");
         match load_universe(&as_of).await {
             Ok((catalog, book)) => {
                 report_catalog(&catalog);
@@ -93,11 +95,34 @@ async fn cycle(
         &credentials.client_id,
         &credentials.access_token,
         catalog,
+        &as_of,
         engine,
         shutdown,
     )
     .await
 }
+
+/// Why the universe must be rebuilt, or None to keep what is loaded. A catalog is
+/// only good for the trading day it was built for, and only while every chain it
+/// names still trades.
+pub(crate) fn reload_reason(
+    loaded: Option<&(String, Catalog)>,
+    as_of: &str,
+) -> Option<String> {
+    match loaded {
+        None => Some(format!("first load for trading day {as_of}")),
+        Some((day, _)) if day != as_of => {
+            Some(format!("trading day moved from {day} to {as_of}"))
+        }
+        Some((_, catalog)) => catalog
+            .stale_expiry(as_of)
+            .map(|(symbol, expiry)| format!("{symbol} expiry {expiry} is behind {as_of}")),
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/server/engine.rs"]
+mod tests;
 
 async fn load_universe(as_of: &str) -> Result<(Catalog, ChainBook)> {
     let instrument_path = download_instrument_master(as_of).await?;
