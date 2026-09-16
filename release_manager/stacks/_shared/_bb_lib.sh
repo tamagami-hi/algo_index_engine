@@ -76,7 +76,9 @@ bb_load_paths() {
           keep_masters: (.retention.keep_instrument_masters // 0 | tostring),
           web_enabled: (.web.enabled // false | tostring),
           web_domain: (.web.domain // ""),
-          web_probe: (.web.local_probe_url // "")
+          web_probe: (.web.local_probe_url // ""),
+          nginx_enabled: (.nginx.enabled // false | tostring),
+          nginx_vhost: (.nginx.vhost_file // "")
         } | to_entries[] | [.key, (.value // "")] | @tsv' "$file")
 
     [[ -n "${P[stack_dir]}" ]] || die "contract has no vps.stack_dir"
@@ -189,6 +191,50 @@ bb_assert_env() {
     [[ -e "${P[env_file]}" ]] \
         || die "missing ${P[env_file]} — place it yourself, then redeploy"
     ok "env file present (contents not inspected)"
+}
+
+# The engine's API can arm and disarm trading strategies, so a port published on
+# anything but loopback is an unauthenticated control surface. Access control
+# lives at the nginx edge; the container must never be reachable around it.
+bb_assert_loopback_only() {
+    local exposed
+    exposed="$(compose config --format json 2>/dev/null | jq -r '
+        (.services // {}) | to_entries[] as $s
+        | ($s.value.ports // [])[]
+        | select(((.host_ip // "0.0.0.0") | . != "127.0.0.1" and . != "::1"))
+        | "\($s.key): \(.host_ip // "0.0.0.0"):\(.published // "?") -> \(.target // "?")"
+    ' 2>/dev/null || true)"
+
+    if [[ -n "$exposed" ]]; then
+        printf '%s\n' "$exposed" | sed 's/^/     /' >&2
+        die "this release would publish the engine beyond loopback — bind it to 127.0.0.1 and put access control at the nginx edge instead"
+    fi
+    ok "every published port is bound to loopback"
+}
+
+# Fail loudly rather than deploying an open control surface. With no edge the
+# engine is reachable only from the box itself, which is closed but also means the
+# operator UI needs an SSH tunnel; with an edge, that edge must actually restrict.
+bb_assert_access_control() {
+    if [[ "${P[nginx_enabled]}" != "true" ]]; then
+        warn "no nginx edge is configured for this stack"
+        warn "the engine is reachable only on VPS loopback — reach the UI with:"
+        warn "  ssh -N -L 47601:127.0.0.1:47601 <this-host>   then http://127.0.0.1:47601"
+        return 0
+    fi
+
+    local vhost="${P[nginx_vhost]}"
+    [[ -n "$vhost" ]] \
+        || die "nginx.enabled is true but nginx.vhost_file is not set in paths.json"
+    [[ -f "$vhost" ]] \
+        || die "nginx.enabled is true but $vhost is not installed — install release_manager/nginx/ first; refusing to deploy an unprotected control surface"
+
+    grep -qE '^[[:space:]]*deny[[:space:]]+all[[:space:]]*;' "$vhost" \
+        || die "$vhost has no 'deny all' — refusing to deploy an open control surface"
+    grep -qE '^[[:space:]]*allow[[:space:]]+100\.64\.0\.0/10[[:space:]]*;' "$vhost" \
+        || die "$vhost does not restrict access to the tailnet — refusing to deploy"
+
+    ok "nginx edge restricts the control surface to the tailnet"
 }
 
 bb_validate_compose() {

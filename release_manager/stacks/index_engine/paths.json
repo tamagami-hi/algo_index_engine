@@ -49,7 +49,11 @@
   },
   "nginx": {
     "enabled": false,
-    "note": "no domain assigned to this engine yet"
+    "vhost_file": "/etc/nginx/sites-enabled/algo-index-engine",
+    "internal_domain": "engine.boe.app.internal",
+    "magicdns_origin": "https://beonedge-vps.tail4ea2bc.ts.net",
+    "location_prefix": "/engine/",
+    "note": "Access control is the tailnet: the vhost must carry allow 100.64.0.0/10 and deny all, which the deploy asserts when enabled is true. Configs to install live in release_manager/nginx/. While this stays false the engine is reachable only on VPS loopback and the UI needs an SSH tunnel."
   },
   "web": {
     "enabled": false,

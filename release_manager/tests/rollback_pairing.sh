@@ -188,7 +188,6 @@ check_contains "and the operator is told rollback cannot fix it" \
     "NOT credentials" "$DRIFT"
 
 printf '\nrefusing to build a mismatched bundle\n'
-
 UNPRESERVED="$ROLLBACK_IMAGES/3.0.0"
 mkdir -p "$UNPRESERVED"
 REFUSAL="$( ( bb_archive_current_images "$UNPRESERVED" "3.0.0" ) 2>&1 || true )"

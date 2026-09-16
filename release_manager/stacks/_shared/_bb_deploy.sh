@@ -72,6 +72,8 @@ bb_deploy_main() {
     bb_assert_env
     BB_VERSION_FOR_COMPOSE="$incoming"
     bb_validate_compose
+    bb_assert_loopback_only
+    bb_assert_access_control
 
     if [[ "${BB_REQUIRE_CONFIRM:-false}" == true && "$ASSUME_YES" != true ]]; then
         if [[ -t 0 ]]; then

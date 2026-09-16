@@ -8,6 +8,9 @@ services:
       - .env
     environment:
       BLACKBOX_HOME: /app
+      BLACKBOX_HTTP_ADDR: 0.0.0.0:8081
+    ports:
+      - "127.0.0.1:8081:8081"
     volumes:
       - engine-data:/app/data
     stop_grace_period: 20s
