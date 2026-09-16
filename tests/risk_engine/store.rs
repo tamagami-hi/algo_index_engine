@@ -196,31 +196,32 @@ fn concurrent_writes_leave_one_coherent_file_and_no_temp_droppings() {
         for turn in 0..16 {
             scope.spawn(move || {
                 if turn % 2 == 0 {
-                    let _ = activate("target");
+                    activate("target").expect("concurrent activation must succeed");
                 } else {
-                    let _ = deactivate("target");
+                    deactivate("target").expect("concurrent deactivation must succeed");
                 }
             });
         }
     });
 
     let from_reader = active();
-    let path = crate::config::data_path("data/strategies/active.json");
-    let on_disk: std::collections::BTreeSet<String> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|body| serde_json::from_str(&body).ok())
-        .unwrap_or_default();
+    let path = crate::config::data_path("data/state/active.json");
+    let body = std::fs::read_to_string(&path).expect("activation state file must exist");
+    let on_disk: std::collections::BTreeSet<String> =
+        serde_json::from_str(&body).expect("activation state file must contain valid JSON");
     assert_eq!(
         from_reader, on_disk,
         "the active set and its file must not disagree"
     );
 
-    let strays = std::fs::read_dir(crate::config::data_path("data/strategies"))
-        .expect("dir")
-        .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
-        .count();
-    assert_eq!(strays, 0, "no temp files may be left behind");
+    for directory in ["data/strategies", "data/state"] {
+        let strays = std::fs::read_dir(crate::config::data_path(directory))
+            .expect("store directory must exist")
+            .map(|entry| entry.expect("store directory entry must be readable"))
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+            .count();
+        assert_eq!(strays, 0, "no temp files may be left behind in {directory}");
+    }
 }
 
 #[test]

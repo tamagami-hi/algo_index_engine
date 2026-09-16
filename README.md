@@ -172,7 +172,7 @@ without broker credentials, and includes the frontend. No deployment is performe
 
 Rust LCOV and frontend coverage summaries are uploaded as workflow artifacts.
 Coverage is reported without a percentage gate. The recorded Rust baseline at
-commit `36cf54b` is 57.48% lines and 58.61% regions; frontend coverage is
+commit `36cf54b` is 58.61% lines and 57.48% regions; frontend coverage is
 52.89% lines/statements. These figures do not meet the 80% target. Tests currently
 focus on quote validity and freshness, strategy constraints, task supervision,
 broker/session handling, and the operator's view of stale data.
