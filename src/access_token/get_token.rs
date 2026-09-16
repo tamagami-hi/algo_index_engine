@@ -33,9 +33,9 @@ pub(crate) async fn saved_token() -> Option<String> {
     let cached = cached_token().await.ok()??;
     let remaining = cached.expiry.remaining_seconds(now_unix_seconds().ok()?);
     (remaining > EXPIRY_MARGIN_SECONDS).then(|| {
-        println!(
-            "Reusing the saved Dhan access token, valid for another {}.",
-            humanize(remaining)
+        tracing::info!(
+            valid_for = %humanize(remaining),
+            "reusing the saved broker access token"
         );
         cached.token
     })
@@ -80,11 +80,11 @@ pub(crate) async fn get_token(url: &str) -> Result<String> {
                 ));
             }
 
-            eprintln!("Warning: could not fetch a Dhan access token: {fetch_error:#}");
-            eprintln!(
-                "Warning: using the cached token, valid for another {} ({}).",
-                humanize(remaining),
-                cached.expiry.source.describe()
+            tracing::warn!(
+                error = %format!("{fetch_error:#}"),
+                valid_for = %humanize(remaining),
+                source = %cached.expiry.source.describe(),
+                "could not fetch a broker access token; falling back to the cached one"
             );
             Ok(cached.token)
         }
@@ -109,10 +109,10 @@ fn report_validity(expiry: &Expiry) -> Result<()> {
             expiry.source.describe()
         );
     }
-    println!(
-        "Dhan access token valid for another {} ({}).",
-        humanize(remaining),
-        expiry.source.describe()
+    tracing::info!(
+        valid_for = %humanize(remaining),
+        source = %expiry.source.describe(),
+        "broker access token accepted"
     );
     Ok(())
 }

@@ -32,14 +32,14 @@ pub(crate) async fn run(engine: EngineState, shutdown: CancellationToken) -> Res
                     break;
                 }
                 let detail = format!("{error:#}");
-                eprintln!("engine cycle failed: {detail}");
+                tracing::error!(detail = %detail, "engine cycle failed");
                 if engine.snapshot().phase != Phase::AuthFailed {
                     engine.feed_disconnected(detail);
                 }
             }
         }
 
-        println!("retrying in {}s", backoff.as_secs());
+        tracing::info!(seconds = backoff.as_secs(), "retrying");
         tokio::select! {
             () = shutdown.cancelled() => break,
             () = tokio::time::sleep(backoff) => {}
@@ -47,7 +47,7 @@ pub(crate) async fn run(engine: EngineState, shutdown: CancellationToken) -> Res
         backoff = (backoff * 2).min(RETRY_MAX);
     }
 
-    println!("engine loop stopped");
+    tracing::info!("engine loop stopped");
     Ok(())
 }
 
@@ -70,7 +70,7 @@ async fn cycle(
     let reason = reload_reason(loaded.as_ref(), &as_of);
     if let Some(reason) = reason {
         engine.set_phase(Phase::LoadingInstruments, reason.clone());
-        println!("loading the universe: {reason}");
+        tracing::info!(reason = %reason, "loading the instrument universe");
         match load_universe(&as_of).await {
             Ok((catalog, book)) => {
                 report_catalog(&catalog);
@@ -119,12 +119,14 @@ mod tests;
 async fn load_universe(as_of: &str) -> Result<(Catalog, ChainBook)> {
     let instrument_path = download_instrument_master(as_of).await?;
     let master = load_instrument_master(&instrument_path)?;
-    println!(
-        "Instrument master: {} option contracts, {} spot rows from {} CSV rows",
-        master.report.option_rows, master.report.spot_rows, master.report.total_rows
+    tracing::info!(
+        option_contracts = master.report.option_rows,
+        spot_rows = master.report.spot_rows,
+        csv_rows = master.report.total_rows,
+        "instrument master loaded"
     );
     let catalog = build_catalog(&master, as_of)?;
     let book = ChainBook::build(&master, &catalog);
-    println!("Option chain book: {} chains assembled", book.chains());
+    tracing::info!(chains = book.chains(), "option chain book assembled");
     Ok((catalog, book))
 }

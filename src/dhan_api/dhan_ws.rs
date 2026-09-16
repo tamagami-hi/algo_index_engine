@@ -10,6 +10,7 @@ use crate::server::state::EngineState;
 const DHAN_WEBSOCKET_URL: &str = "wss://api-feed.dhan.co/";
 const SUBSCRIBE_FULL: u32 = 21;
 const ROLL_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
+const SILENCE_CHECK: std::time::Duration = std::time::Duration::from_secs(1);
 
 fn subscribe_message(batch: &[Subscription]) -> String {
     let instruments: Vec<serde_json::Value> = batch
@@ -65,22 +66,26 @@ pub(crate) async fn ws_dhan_connection(
         }
     };
 
-    println!("Dhan feed connected: HTTP {}", response.status());
+    tracing::info!(status = %response.status(), "broker feed connected");
     state.feed_connected();
 
     let mut subscribed = 0;
     for pool in catalog.pools() {
         subscribed += subscribe_pool(&mut ws_stream, pool).await?;
     }
-    println!(
-        "subscribed {subscribed} instruments in full mode across {} messages",
-        catalog.message_count()
+    tracing::info!(
+        instruments = subscribed,
+        messages = catalog.message_count(),
+        mode = "full",
+        "subscribed to the market feed"
     );
     state.feed_subscribed(subscribed);
 
     let mut cancelled = false;
     let mut roll_check = tokio::time::interval(ROLL_CHECK);
     roll_check.tick().await;
+    let mut silence_check = tokio::time::interval(SILENCE_CHECK);
+    silence_check.tick().await;
 
     loop {
         let next = tokio::select! {
@@ -88,10 +93,15 @@ pub(crate) async fn ws_dhan_connection(
                 cancelled = true;
                 None
             }
+            _ = silence_check.tick() => {
+                state.check_feed_silence();
+                continue;
+            }
             _ = roll_check.tick() => {
+                state.check_feed_silence();
                 match ist_today() {
                     Ok(today) if today != as_of => {
-                        println!("trading day rolled from {as_of} to {today}; reloading the universe");
+                        tracing::info!(from = %as_of, to = %today, "trading day rolled; reloading the universe");
                         None
                     }
                     _ => continue,
@@ -109,14 +119,14 @@ pub(crate) async fn ws_dhan_connection(
                 let messages = decode_frame(&data);
                 for message in &messages {
                     if let Packet::Disconnect { reason } = message.packet {
-                        println!("Dhan feed sent disconnect reason {reason}");
+                        tracing::warn!(reason, "broker feed sent a disconnect");
                     }
                 }
                 state.apply_frame(data.len(), &messages);
             }
             Message::Text(text) => {
                 state.apply_frame(text.len(), &[]);
-                println!("Dhan text message: {text}");
+                tracing::debug!(%text, "broker feed text message");
             }
             Message::Ping(data) => {
                 ws_stream
@@ -125,7 +135,7 @@ pub(crate) async fn ws_dhan_connection(
                     .context("Failed to reply to Dhan WebSocket ping")?;
             }
             Message::Close(frame) => {
-                println!("Dhan feed closed: {frame:?}");
+                tracing::warn!(frame = ?frame, "broker feed closed");
                 break;
             }
             Message::Pong(_) | Message::Frame(_) => {}
@@ -133,7 +143,7 @@ pub(crate) async fn ws_dhan_connection(
     }
 
     if cancelled {
-        println!("closing the Dhan feed");
+        tracing::info!("closing the broker feed");
         let _ = ws_stream.send(Message::Close(None)).await;
     }
 

@@ -68,6 +68,7 @@ export function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     catalog: null,
     feed: {
       connected: true,
+      stale: false,
       connects: 1,
       disconnects: 0,
       frames: 10,

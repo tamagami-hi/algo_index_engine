@@ -11,6 +11,7 @@ export type Phase =
 
 export interface FeedView {
   connected: boolean;
+  stale: boolean;
   connects: number;
   disconnects: number;
   frames: number;

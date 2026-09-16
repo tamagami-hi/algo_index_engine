@@ -115,6 +115,7 @@ impl CatalogView {
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct FeedView {
     pub(crate) connected: bool,
+    pub(crate) stale: bool,
     pub(crate) connects: u64,
     pub(crate) disconnects: u64,
     pub(crate) frames: u64,
@@ -268,17 +269,60 @@ impl EngineState {
             snapshot.phase = Phase::FeedConnected;
             snapshot.detail = String::new();
             snapshot.feed.connected = true;
+            snapshot.feed.stale = false;
             snapshot.feed.connects += 1;
         });
+        tracing::info!("feed marked connected");
     }
 
     pub(crate) fn feed_disconnected(&self, detail: impl Into<String>) {
+        let detail = detail.into();
         self.update(|snapshot| {
             snapshot.phase = Phase::FeedDisconnected;
-            snapshot.detail = detail.into();
+            snapshot.detail = detail.clone();
             snapshot.feed.connected = false;
+            snapshot.feed.stale = false;
             snapshot.feed.disconnects += 1;
         });
+        tracing::warn!(detail = %detail, "feed marked disconnected");
+    }
+
+    /// Called on a timer rather than on a frame: going quiet is the absence of
+    /// frames, so nothing in the receive path can notice it.
+    pub(crate) fn check_feed_silence(&self) {
+        let limit = crate::option_chain::quality::freshness().feed_silence_max_ms;
+        let (connected, last_frame_at, was_stale) = {
+            let snapshot = self.sender.borrow();
+            (
+                snapshot.feed.connected,
+                snapshot.feed.last_frame_at,
+                snapshot.feed.stale,
+            )
+        };
+
+        if !connected {
+            return;
+        }
+        let Some(stamp) = last_frame_at else {
+            return;
+        };
+
+        let age = crate::option_chain::quality::age_since(stamp);
+        let is_stale = age > limit;
+        if is_stale == was_stale {
+            return;
+        }
+
+        self.update(|snapshot| snapshot.feed.stale = is_stale);
+        if is_stale {
+            tracing::warn!(
+                age_ms = age,
+                limit_ms = limit,
+                "feed has gone silent; strategies cannot evaluate safely"
+            );
+        } else {
+            tracing::info!(age_ms = age, "feed is delivering again");
+        }
     }
 
     pub(crate) fn feed_subscribed(&self, instruments: usize) {

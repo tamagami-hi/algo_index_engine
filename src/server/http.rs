@@ -120,13 +120,13 @@ pub(crate) async fn serve(
 
     let web_root = crate::config::data_path(WEB_ROOT);
     let app = if web_root.is_dir() {
-        println!("serving the frontend from {}", web_root.display());
+        tracing::info!(root = %web_root.display(), "serving the frontend");
         let index = web_root.join("index.html");
         app.fallback_service(ServeDir::new(&web_root).fallback(ServeFile::new(index)))
     } else {
-        println!(
-            "no frontend build at {}; API only (run: cd web && npm run build)",
-            web_root.display()
+        tracing::warn!(
+            root = %web_root.display(),
+            "no frontend build present; serving the API only (cd web && npm run build)"
         );
         app
     };
@@ -135,14 +135,14 @@ pub(crate) async fn serve(
         .await
         .with_context(|| format!("cannot bind the HTTP server to {addr}"))?;
 
-    println!("HTTP server listening on {addr}");
+    tracing::info!(%addr, "HTTP server listening");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { shutdown.cancelled().await })
         .await
         .context("HTTP server failed")?;
 
-    println!("HTTP server drained");
+    tracing::info!("HTTP server drained");
     Ok(())
 }
 
@@ -214,6 +214,9 @@ async fn ready(State(http): State<Http>) -> Response {
     if !snapshot.feed.connected {
         reasons.push("the market feed is not connected");
     }
+    if snapshot.feed.stale {
+        reasons.push("the market feed has gone silent");
+    }
 
     let last_frame_age_ms = snapshot
         .feed
@@ -222,7 +225,9 @@ async fn ready(State(http): State<Http>) -> Response {
     let silence_limit = crate::option_chain::quality::freshness().feed_silence_max_ms;
     match last_frame_age_ms {
         None if snapshot.feed.connected => reasons.push("no market data has arrived yet"),
-        Some(age) if age > silence_limit => reasons.push("the market feed has gone silent"),
+        Some(age) if age > silence_limit && !snapshot.feed.stale => {
+            reasons.push("the market feed has gone silent");
+        }
         _ => {}
     }
 
@@ -435,10 +440,18 @@ async fn api_save_strategy(Path(id): Path<String>, body: String) -> Response {
     strategy.id = id;
 
     if let Err(problem) = strategy.validate() {
+        tracing::warn!(
+            strategy = %strategy.id,
+            problem = %serde_json::to_string(&problem).unwrap_or_default(),
+            "rejected an invalid strategy"
+        );
         return encoded(StatusCode::UNPROCESSABLE_ENTITY, &problem);
     }
     match risk_engine::store::save(&strategy) {
-        Ok(()) => encoded(StatusCode::OK, &strategy),
+        Ok(()) => {
+            tracing::info!(strategy = %strategy.id, underlying = %strategy.underlying, "strategy saved");
+            encoded(StatusCode::OK, &strategy)
+        }
         Err(error) => failed(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
