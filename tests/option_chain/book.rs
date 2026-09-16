@@ -203,3 +203,223 @@ fn an_unknown_symbol_has_no_view() {
     assert!(book.view("BANKNIFTY").is_none());
     assert!(book.view("nifty").is_some(), "lookup is case-insensitive");
 }
+
+
+#[test]
+fn the_wire_encoding_drops_f32_noise_without_moving_a_price() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+    book.apply(&full_message(101, 129.3, 128.8, 129.8, 120_000));
+    book.apply(&full_message(102, 87.45, 87.0, 87.9, 95_000));
+
+    let columns = book.columns("NIFTY").expect("columns");
+    let encoded = serde_json::to_string(&columns).expect("encode");
+
+    assert!(
+        encoded.contains("\"ltp\":[129.3,0,0]"),
+        "the exchange sent 129.3 and the wire must say 129.3, not the f32 widening: {encoded}"
+    );
+    assert!(
+        !encoded.contains("129.3000"),
+        "no f32 noise may reach the browser: {encoded}"
+    );
+    assert!(
+        encoded.contains("\"bid_quantity\":[750,0,0]"),
+        "an integral quantity carries no decimal point: {encoded}"
+    );
+    assert!(
+        encoded.contains("\"strike\":[25000,25050,25100]"),
+        "strikes are whole numbers: {encoded}"
+    );
+    assert!(
+        encoded.contains("\"ltp\":[87.45,0,0]"),
+        "two decimals of premium survive: {encoded}"
+    );
+
+    let decoded: serde_json::Value = serde_json::from_str(&encoded).expect("decode");
+    let ltp = &decoded["call"]["ltp"][0];
+    assert_eq!(
+        ltp.as_f64().expect("a number"),
+        129.3,
+        "the value a client reads back is the price the exchange sent"
+    );
+}
+
+#[test]
+fn a_non_finite_cell_is_null_rather_than_a_fabricated_zero() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+    book.apply(&full_message(101, f32::NAN, 1.0, 2.0, 10));
+
+    let columns = book.columns("NIFTY").expect("columns");
+    let encoded = serde_json::to_string(&columns).expect("a non-finite cell must still encode");
+    assert!(
+        encoded.contains("\"ltp\":[null,0,0]"),
+        "an unusable price is absent, not zero: {encoded}"
+    );
+}
+
+#[test]
+#[ignore]
+fn perf_probe() {
+    use crate::server::EngineState;
+    use std::time::Instant;
+
+    const SYMBOLS: [(&str, f64, f64, u32); 7] = [
+        ("NIFTY", 25_000.0, 50.0, 65),
+        ("BANKNIFTY", 54_000.0, 100.0, 30),
+        ("FINNIFTY", 25_500.0, 50.0, 25),
+        ("MIDCPNIFTY", 12_800.0, 25.0, 120),
+        ("NIFTYNXT50", 68_000.0, 100.0, 60),
+        ("SENSEX", 82_000.0, 100.0, 20),
+        ("BANKEX", 62_000.0, 100.0, 30),
+    ];
+    const STRIKES: usize = 260;
+
+    let mut options = Vec::with_capacity(SYMBOLS.len() * STRIKES * 2);
+    let mut spots = Vec::new();
+    let mut security_id = 10_000_i32;
+    let mut option_ids: Vec<i32> = Vec::new();
+
+    for (symbol, base, step, lot) in SYMBOLS {
+        let segment = if symbol == "SENSEX" || symbol == "BANKEX" {
+            ExchangeSegment::BseFno
+        } else {
+            ExchangeSegment::NseFno
+        };
+        for index in 0..STRIKES {
+            let strike = base + step * (index as f64 - STRIKES as f64 / 2.0);
+            for option_type in [OptionType::Call, OptionType::Put] {
+                security_id += 1;
+                option_ids.push(security_id);
+                options.push(OptionContract {
+                    segment,
+                    security_id: security_id.to_string(),
+                    underlying_symbol: symbol.to_owned(),
+                    expiry: "2026-09-22".to_owned(),
+                    strike_units: to_strike_units(strike),
+                    option_type,
+                    lot_size: lot,
+                    kind: ChainKind::Index,
+                });
+            }
+        }
+        security_id += 1;
+        spots.push(SpotRow {
+            segment: ExchangeSegment::IdxI,
+            security_id: security_id.to_string(),
+            exchange_id: "NSE".to_owned(),
+            underlying_symbol: symbol.to_owned(),
+            symbol_name: symbol.to_owned(),
+            expiry: String::new(),
+            kind: SpotKind::Index,
+        });
+    }
+
+    let master = InstrumentMaster {
+        options,
+        spots,
+        report: Default::default(),
+    };
+    let catalog =
+        crate::dhan_api::instruments::build_catalog(&master, "2026-09-16").expect("catalog");
+    let book = ChainBook::build(&master, &catalog);
+
+    println!(
+        "\nuniverse: {} chains, {} option contracts, {} strikes each",
+        book.chains(),
+        master.options.len(),
+        STRIKES
+    );
+
+    let engine = EngineState::new();
+    engine.set_book(book);
+
+    let packets_per_frame = 10;
+    let frames = 2_000;
+    let mut cursor = 0usize;
+
+    let mut batches: Vec<Vec<Message>> = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        let mut batch = Vec::with_capacity(packets_per_frame);
+        for _ in 0..packets_per_frame {
+            let id = option_ids[cursor % option_ids.len()];
+            cursor += 1;
+            let price = 80.0 + (cursor % 50) as f32;
+            batch.push(full_message(id, price, price - 0.5, price + 0.5, 120_000));
+        }
+        batches.push(batch);
+    }
+
+    let started = Instant::now();
+    for batch in &batches {
+        engine.apply_frame(1_620, batch);
+    }
+    let elapsed = started.elapsed();
+    println!(
+        "apply_frame        {:>8.1} us/frame   ({} frames x {} packets, {:.0} frames/s)",
+        elapsed.as_secs_f64() * 1e6 / frames as f64,
+        frames,
+        packets_per_frame,
+        frames as f64 / elapsed.as_secs_f64()
+    );
+
+    let columns_started = Instant::now();
+    let rounds = 500;
+    let mut bytes = 0usize;
+    for _ in 0..rounds {
+        let columns = engine.chain_columns("NIFTY").expect("columns");
+        bytes = serde_json::to_string(&columns).expect("encode").len();
+    }
+    let columns_elapsed = columns_started.elapsed();
+    println!(
+        "chain_columns+json {:>8.1} us/call    ({} bytes per payload)",
+        columns_elapsed.as_secs_f64() * 1e6 / rounds as f64,
+        bytes
+    );
+
+    let build_started = Instant::now();
+    for _ in 0..rounds {
+        let columns = engine.chain_columns("NIFTY").expect("columns");
+        std::hint::black_box(&columns);
+    }
+    let build_elapsed = build_started.elapsed();
+    println!(
+        "  chain_columns    {:>8.1} us/call    (metrics + 19 vec clones)",
+        build_elapsed.as_secs_f64() * 1e6 / rounds as f64
+    );
+
+    let prebuilt = engine.chain_columns("NIFTY").expect("columns");
+    let json_started = Instant::now();
+    for _ in 0..rounds {
+        std::hint::black_box(serde_json::to_string(&prebuilt).expect("encode"));
+    }
+    let json_elapsed = json_started.elapsed();
+    println!(
+        "  serde_json only  {:>8.1} us/call",
+        json_elapsed.as_secs_f64() * 1e6 / rounds as f64
+    );
+
+    let snapshot_started = Instant::now();
+    for _ in 0..rounds {
+        let snapshot = engine.snapshot();
+        bytes = serde_json::to_string(&snapshot).expect("encode").len();
+    }
+    let snapshot_elapsed = snapshot_started.elapsed();
+    println!(
+        "snapshot+json      {:>8.1} us/call    ({} bytes per payload)",
+        snapshot_elapsed.as_secs_f64() * 1e6 / rounds as f64,
+        bytes
+    );
+
+    let metrics_started = Instant::now();
+    for _ in 0..rounds {
+        let all = engine.chain_metrics();
+        std::hint::black_box(&all);
+    }
+    let metrics_elapsed = metrics_started.elapsed();
+    println!(
+        "chain_metrics(all) {:>8.1} us/call    (recomputed inside every apply_frame)\n",
+        metrics_elapsed.as_secs_f64() * 1e6 / rounds as f64
+    );
+}

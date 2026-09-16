@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeSeq};
 
 use super::metrics::{ChainMetrics, StraddleRow, market_atm_index, metrics, straddle_rows};
 use super::table::{OptionTable, build_tables, feed_key};
@@ -8,6 +8,25 @@ use crate::dhan_api::feed::{Message, Packet};
 use crate::dhan_api::instruments::{
     Catalog, ExchangeSegment, InstrumentMaster, OptionType, SpotInstrument, UnderlyingKey,
 };
+
+const WIRE_DECIMALS: f64 = 100.0;
+
+fn compact_numbers<S: Serializer>(values: &[f64], serializer: S) -> Result<S::Ok, S::Error> {
+    let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+    for value in values {
+        if !value.is_finite() {
+            sequence.serialize_element(&Option::<f64>::None)?;
+            continue;
+        }
+        let rounded = (value * WIRE_DECIMALS).round() / WIRE_DECIMALS;
+        if rounded == rounded.trunc() && rounded.abs() < 9.0e15 {
+            sequence.serialize_element(&(rounded as i64))?;
+        } else {
+            sequence.serialize_element(&rounded)?;
+        }
+    }
+    sequence.end()
+}
 
 type FeedKey = (ExchangeSegment, i32);
 
@@ -40,14 +59,23 @@ pub(crate) struct Quote {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct SideColumns {
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) ltp: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) bid: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) bid_quantity: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) ask: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) ask_quantity: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) oi: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) change_in_oi: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) volume: Vec<f64>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) change: Vec<f64>,
     pub(crate) quoted: Vec<bool>,
 }
@@ -57,6 +85,7 @@ pub(crate) struct ChainColumns {
     #[serde(flatten)]
     pub(crate) metrics: ChainMetrics,
     pub(crate) market_atm_row: Option<usize>,
+    #[serde(serialize_with = "compact_numbers")]
     pub(crate) strike: Vec<f64>,
     pub(crate) call: SideColumns,
     pub(crate) put: SideColumns,
@@ -218,39 +247,52 @@ impl ChainBook {
     }
 
     pub(crate) fn apply(&mut self, message: &Message) {
+        let Self {
+            tables,
+            legs,
+            spots,
+            references,
+            reference_prices,
+            applied,
+            unmatched,
+        } = self;
+
         let Some(segment) = message.header.segment else {
-            self.unmatched += 1;
+            *unmatched += 1;
             return;
         };
         let key = (segment, message.header.security_id);
+        let price = reference_price_of(&message.packet).filter(|value| *value > 0.0);
 
-        if let Some(label) = self.references.get(&key).cloned()
-            && let Some(price) = reference_price_of(&message.packet)
-            && price > 0.0
+        if let Some(label) = references.get(&key)
+            && let Some(price) = price
         {
-            self.reference_prices.insert(label, price);
+            match reference_prices.get_mut(label) {
+                Some(slot) => *slot = price,
+                None => {
+                    reference_prices.insert(label.clone(), price);
+                }
+            }
         }
 
-        if let Some(chains) = self.spots.get(&key) {
-            if let Some(price) = reference_price_of(&message.packet)
-                && price > 0.0
-            {
-                for chain in chains.clone() {
-                    self.tables[chain].spot_price = price;
-                    self.tables[chain].spot_updates += 1;
+        if let Some(chains) = spots.get(&key) {
+            if let Some(price) = price {
+                for chain in chains {
+                    tables[*chain].spot_price = price;
+                    tables[*chain].spot_updates += 1;
                 }
-                self.applied += 1;
+                *applied += 1;
             }
             return;
         }
 
-        let Some(legs) = self.legs.get(&key).cloned() else {
-            self.unmatched += 1;
+        let Some(matched) = legs.get(&key) else {
+            *unmatched += 1;
             return;
         };
 
-        for leg in legs {
-            let table = &mut self.tables[leg.chain];
+        for leg in matched {
+            let table = &mut tables[leg.chain];
             let block = match leg.side {
                 OptionType::Call => &mut table.calls,
                 OptionType::Put => &mut table.puts,
@@ -259,7 +301,7 @@ impl ChainBook {
                 continue;
             }
             apply_packet(block, leg.row, &message.packet);
-            self.applied += 1;
+            *applied += 1;
         }
     }
 }

@@ -314,23 +314,19 @@ impl EngineState {
             counts.tally(&message.packet);
         }
 
-        let stats = {
+        let observed = {
             let mut guard = self.book.write().unwrap_or_else(|error| {
                 self.book.clear_poison();
                 error.into_inner()
             });
-            match guard.as_mut() {
-                Some(book) => {
-                    for message in messages {
-                        book.apply(message);
-                    }
-                    Some(book.stats())
+            guard.as_mut().map(|book| {
+                for message in messages {
+                    book.apply(message);
                 }
-                None => None,
-            }
+                let (applied, unmatched, references) = book.stats();
+                (applied, unmatched, references, summaries_of(book))
+            })
         };
-
-        let summaries = self.chain_summaries();
 
         self.update(|snapshot| {
             let feed = &mut snapshot.feed;
@@ -341,34 +337,34 @@ impl EngineState {
                 feed.undecodable_frames += 1;
             }
             counts.merge_into(feed);
-            if let Some((applied, unmatched, references)) = stats.clone() {
+            if let Some((applied, unmatched, references, summaries)) = observed {
                 feed.applied = applied;
                 feed.unmatched = unmatched;
                 feed.indices = references;
-            }
-            if !summaries.is_empty() {
-                snapshot.chains = summaries.clone();
+                if !summaries.is_empty() {
+                    snapshot.chains = summaries;
+                }
             }
         });
     }
+}
 
-    fn chain_summaries(&self) -> Vec<ChainSummaryView> {
-        self.chain_metrics()
-            .iter()
-            .map(|chain| ChainSummaryView {
-                symbol: chain.symbol.clone(),
-                expiry: chain.expiry.clone(),
-                spot_price: chain.spot_price,
-                spot_atm: chain.spot_atm,
-                market_atm: chain.market_atm,
-                max_pain: chain.max_pain,
-                atm_straddle: chain.atm_straddle,
-                pcr_oi: chain.pcr_oi,
-                quoted_strikes: chain.quoted_strikes,
-                strikes: chain.strikes,
-            })
-            .collect()
-    }
+fn summaries_of(book: &ChainBook) -> Vec<ChainSummaryView> {
+    book.metrics()
+        .into_iter()
+        .map(|chain| ChainSummaryView {
+            symbol: chain.symbol,
+            expiry: chain.expiry,
+            spot_price: chain.spot_price,
+            spot_atm: chain.spot_atm,
+            market_atm: chain.market_atm,
+            max_pain: chain.max_pain,
+            atm_straddle: chain.atm_straddle,
+            pcr_oi: chain.pcr_oi,
+            quoted_strikes: chain.quoted_strikes,
+            strikes: chain.strikes,
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Default)]

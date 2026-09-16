@@ -108,15 +108,15 @@ export interface ChainMetrics {
 }
 
 export interface SideColumns {
-  ltp: number[];
-  bid: number[];
-  bid_quantity: number[];
-  ask: number[];
-  ask_quantity: number[];
-  oi: number[];
-  change_in_oi: number[];
-  volume: number[];
-  change: number[];
+  ltp: (number | null)[];
+  bid: (number | null)[];
+  bid_quantity: (number | null)[];
+  ask: (number | null)[];
+  ask_quantity: (number | null)[];
+  oi: (number | null)[];
+  change_in_oi: (number | null)[];
+  volume: (number | null)[];
+  change: (number | null)[];
   quoted: boolean[];
 }
 
