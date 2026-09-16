@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import { LinkStatus, StaleBanner } from "./LinkStatus";
-import { useEngine } from "../stores/engine";
-import type { Link } from "../stores/engine";
-import { frame } from "../test/factories";
+import { LinkStatus, StaleBanner } from "../../src/components/LinkStatus";
+import { useEngine } from "../../src/stores/engine";
+import type { Link } from "../../src/stores/engine";
+import { frame } from "../support/factories";
 
 function seed(overrides: Partial<ReturnType<typeof useEngine.getState>> = {}) {
   useEngine.setState({

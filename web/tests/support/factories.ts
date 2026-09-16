@@ -5,7 +5,7 @@ import type {
   Snapshot,
   StreamFrame,
   Strategy,
-} from "../types/api";
+} from "../../src/types/api";
 
 export function side(overrides: Partial<SideColumns> = {}): SideColumns {
   return {

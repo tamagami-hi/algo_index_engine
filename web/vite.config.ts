@@ -22,13 +22,13 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    setupFiles: ["./tests/support/setup.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
       include: ["src/**/*.ts", "src/**/*.tsx"],
-      exclude: ["src/test/**", "src/main.tsx", "src/types/**"],
+      exclude: ["src/main.tsx", "src/types/**"],
     },
   },
 });

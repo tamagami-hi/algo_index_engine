@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrategyEditor } from "./StrategyEditor";
-import { useStrategies } from "../stores/strategies";
-import { strategy } from "../test/factories";
-import { MAX_PREMIUM_PERCENT } from "../types/api";
+import { StrategyEditor } from "../../src/components/StrategyEditor";
+import { useStrategies } from "../../src/stores/strategies";
+import { strategy } from "../support/factories";
+import { MAX_PREMIUM_PERCENT } from "../../src/types/api";
 
 function legScope(index: number): HTMLElement {
   const legend = screen.getByText(new RegExp(`^leg ${index} ·`));

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { STREAM_SILENCE_MS, isStale, statusLabel, useEngine } from "./engine";
-import { api } from "../api/client";
-import { StubEventSource } from "../test/setup";
-import { chain, frame } from "../test/factories";
+import { STREAM_SILENCE_MS, isStale, statusLabel, useEngine } from "../../src/stores/engine";
+import { api } from "../../src/api/client";
+import { StubEventSource } from "../support/setup";
+import { chain, frame } from "../support/factories";
 
 function reset() {
   useEngine.setState({

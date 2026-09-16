@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import { Chains } from "./Chains";
-import { useEngine } from "../stores/engine";
-import { chain, side } from "../test/factories";
+import { Chains } from "../../src/pages/Chains";
+import { useEngine } from "../../src/stores/engine";
+import { chain, side } from "../support/factories";
 
 const CALL_BID = 3;
 const CALL_ASK = 4;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ResolutionView } from "./Execution";
-import { resolution } from "../test/factories";
+import { ResolutionView } from "../../src/pages/Execution";
+import { resolution } from "../support/factories";
 
 describe("entry and session are separate permissions", () => {
   it("can show entry shut while the session is still live", () => {
