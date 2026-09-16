@@ -5,6 +5,7 @@ import { useStrategies } from "../stores/strategies";
 import { Panel, num } from "../components/ui";
 import { StrategyFlow, StrategyNotes } from "../components/StrategyFlow";
 import { StrategyEditor } from "../components/StrategyEditor";
+import { DTE_CHOICES } from "../types/api";
 import type { Resolution, Strategy } from "../types/api";
 
 function legSummary(strategy: Strategy): string {
@@ -23,6 +24,12 @@ function legSummary(strategy: Strategy): string {
       return `${leg.action === "sell" ? "-" : "+"}${leg.lots} ${strike} ${side}${stop}`;
     })
     .join("   ");
+}
+
+function dte(strategy: Strategy): string {
+  if (strategy.dte.length === 0) return "no DTE selected";
+  if (DTE_CHOICES.every((day) => strategy.dte.includes(day))) return "all DTE";
+  return strategy.dte.map((day) => `${day}DTE`).join(" ");
 }
 
 function condition(strategy: Strategy): string {
@@ -45,7 +52,8 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
         <span className={resolution.expiry_gate_met ? "tag live" : "tag"}>
           {resolution.days_to_expiry === null
             ? "expiry unknown"
-            : `${resolution.days_to_expiry}DTE`}
+            : `${resolution.days_to_expiry}DTE`}{" "}
+          / {resolution.dte_selection}
         </span>
         <span className={resolution.would_enter_now ? "tag live" : "tag"}>
           {resolution.would_enter_now ? "would enter now" : "would not enter"}
@@ -120,6 +128,7 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
 
 export function Execution() {
   const strategies = useStrategies((store) => store.strategies);
+  const unreadable = useStrategies((store) => store.unreadable);
   const active = useStrategies((store) => store.active);
   const resolutions = useStrategies((store) => store.resolutions);
   const busy = useStrategies((store) => store.busy);
@@ -161,6 +170,22 @@ export function Execution() {
 
       {error ? <div className="err">{error}</div> : null}
 
+      {unreadable.length > 0 ? (
+        <Panel title="unreadable saved strategies">
+          <div className="err">
+            {unreadable.map((entry) => (
+              <div key={entry.file}>
+                {entry.file}: {entry.problem}
+              </div>
+            ))}
+          </div>
+          <span className="note">
+            These files are on disk but could not be parsed, so they are not listed
+            above. Re-save them from the editor or remove them.
+          </span>
+        </Panel>
+      ) : null}
+
       <Panel title="paper trading">
         <div className="rowline">
           <span className="note">
@@ -198,6 +223,7 @@ export function Execution() {
                   <h3 style={{ margin: 0 }}>{strategy.name}</h3>
                   <span className="tag">{strategy.underlying}</span>
                   <span className="tag">{condition(strategy)}</span>
+                  <span className="tag">{dte(strategy)}</span>
                   <span className="tag">{strategy.loss_coverage}</span>
                   <span className="tag">
                     {strategy.entry_time} → {strategy.exit_time}

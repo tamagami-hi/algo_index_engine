@@ -1,6 +1,7 @@
 import type {
   ChainColumns,
   ChainMetrics,
+  Listing,
   Resolution,
   Snapshot,
   Strategy,
@@ -33,7 +34,7 @@ export const api = {
   chainColumns: (symbol: string) =>
     request<ChainColumns>(`/api/chain/${encodeURIComponent(symbol)}/columns`),
 
-  strategies: () => request<Strategy[]>("/api/strategies"),
+  strategies: () => request<Listing>("/api/strategies"),
   strategyTemplate: (underlying: string) =>
     request<Strategy>(
       `/api/strategies/template?chain=${encodeURIComponent(underlying)}`,

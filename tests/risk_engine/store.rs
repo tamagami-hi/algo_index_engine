@@ -13,7 +13,7 @@ fn strategy(id: &str, underlying: &str) -> Strategy {
         underlying: underlying.to_owned(),
         entry_time: TimeOfDay::from_minutes(9 * 60 + 16),
         exit_time: TimeOfDay::from_minutes(14 * 60 + 59),
-        max_days_to_expiry: Some(1),
+        dte: crate::risk_engine::strategy::DteSelection::default(),
         entry_condition: EntryCondition::Always,
         legs: vec![LegDefinition {
             side: Side::Call,
@@ -92,7 +92,7 @@ fn listing_returns_saved_strategies_sorted_and_skips_the_active_marker() {
     save(&strategy("alpha", "NIFTY")).expect("save alpha");
     activate("alpha").expect("activate");
 
-    let ids: Vec<String> = list().into_iter().map(|item| item.id).collect();
+    let ids: Vec<String> = list().strategies.into_iter().map(|item| item.id).collect();
     assert_eq!(ids, vec!["alpha".to_owned(), "zeta".to_owned()]);
 }
 
@@ -149,7 +149,8 @@ fn several_strategies_can_target_different_indices_at_once() {
     }
 
     assert_eq!(active().len(), 4);
-    let underlyings: Vec<String> = list().into_iter().map(|item| item.underlying).collect();
+    let underlyings: Vec<String> =
+        list().strategies.into_iter().map(|item| item.underlying).collect();
     assert_eq!(
         underlyings,
         vec![

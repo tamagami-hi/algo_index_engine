@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useStrategies } from "../stores/strategies";
+import { DTE_CHOICES } from "../types/api";
 import type {
   EntryCondition,
   LegDefinition,
@@ -228,6 +229,7 @@ export function StrategyEditor({
   const gate = draft.entry_condition;
   const gateValue = gate.type === "always" ? "" : String(gate.value);
   const gateReference = gate.type === "always" ? "INDIA VIX" : gate.reference;
+  const allDte = DTE_CHOICES.every((day) => draft.dte.includes(day));
 
   const setGate = (next: EntryCondition) => setDraft({ ...draft, entry_condition: next });
 
@@ -296,22 +298,56 @@ export function StrategyEditor({
                 onChange={(event) => setDraft({ ...draft, exit_time: event.target.value })}
               />
             </Field>
-            <Field label="max days to expiry">
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>days to expiry</legend>
+          <span className="note">
+            Tick the DTEs this strategy may enter on. On any other day it stays idle even
+            when armed.
+          </span>
+          <div className="rowline" style={{ marginTop: "0.4rem", flexWrap: "wrap" }}>
+            <label className="tag" style={{ cursor: "pointer" }}>
               <input
-                type="number"
-                min="0"
-                value={draft.max_days_to_expiry ?? ""}
-                placeholder="any"
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    max_days_to_expiry:
-                      event.target.value === "" ? undefined : Number(event.target.value),
-                  })
+                type="checkbox"
+                checked={allDte}
+                style={{ marginRight: "0.3rem" }}
+                onChange={() =>
+                  setDraft({ ...draft, dte: allDte ? [] : [...DTE_CHOICES] })
                 }
               />
-            </Field>
+              all DTE
+            </label>
+            {DTE_CHOICES.map((day) => {
+              const chosen = draft.dte.includes(day);
+              return (
+                <label
+                  key={day}
+                  className={chosen ? "tag live" : "tag"}
+                  style={{ cursor: "pointer" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={chosen}
+                    style={{ marginRight: "0.3rem" }}
+                    onChange={() =>
+                      setDraft({
+                        ...draft,
+                        dte: chosen
+                          ? draft.dte.filter((value) => value !== day)
+                          : [...draft.dte, day].sort((a, b) => a - b),
+                      })
+                    }
+                  />
+                  {day} DTE
+                </label>
+              );
+            })}
           </div>
+          {draft.dte.length === 0 ? (
+            <div className="err">select at least one DTE or the strategy can never run</div>
+          ) : null}
         </fieldset>
 
         <fieldset>

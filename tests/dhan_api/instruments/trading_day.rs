@@ -55,3 +55,45 @@ fn a_malformed_date_is_an_error_not_a_silent_zero() {
     assert!(days_between("not-a-date", "2026-09-16").is_err());
     assert!(days_between("2026-09-16", "20260917").is_err());
 }
+
+
+#[test]
+fn shifting_a_date_agrees_with_the_span_it_was_asked_for() {
+    for days in [0_i64, 1, 6, 7, 30, 365, -1, -6, -400] {
+        for from in [
+            "2026-09-16",
+            "2026-12-31",
+            "2026-01-01",
+            "2024-02-28",
+            "2026-02-28",
+            "2026-03-01",
+        ] {
+            let shifted = shift_iso_date(from, days).expect("shift");
+            assert_eq!(
+                days_between(from, &shifted).expect("span"),
+                days,
+                "{from} shifted by {days} gave {shifted}"
+            );
+        }
+    }
+}
+
+#[test]
+fn shifting_lands_on_the_expected_calendar_day() {
+    assert_eq!(shift_iso_date("2026-09-16", 6).unwrap(), "2026-09-22");
+    assert_eq!(shift_iso_date("2026-09-16", 0).unwrap(), "2026-09-16");
+    assert_eq!(shift_iso_date("2026-12-31", 1).unwrap(), "2027-01-01");
+    assert_eq!(shift_iso_date("2026-02-28", 1).unwrap(), "2026-03-01");
+    assert_eq!(
+        shift_iso_date("2024-02-28", 1).unwrap(),
+        "2024-02-29",
+        "2024 has a 29th"
+    );
+    assert_eq!(shift_iso_date("2027-01-01", -1).unwrap(), "2026-12-31");
+}
+
+#[test]
+fn shifting_a_malformed_date_is_an_error() {
+    assert!(shift_iso_date("2026-13-01", 1).is_err());
+    assert!(shift_iso_date("20260916", 1).is_err());
+}

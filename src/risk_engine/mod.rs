@@ -51,22 +51,13 @@ pub(crate) struct Resolution {
     pub(crate) minutes_until_exit: i64,
     pub(crate) days_to_expiry: Option<i64>,
     pub(crate) expiry_gate_met: bool,
+    pub(crate) dte_selection: String,
     pub(crate) lot_size: u32,
     pub(crate) legs: Vec<ResolvedLeg>,
     pub(crate) problems: Vec<LegProblem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sizing: Option<SizingProblem>,
     pub(crate) would_enter_now: bool,
-}
-
-/// 0DTE and 1DTE mean days_to_expiry in 0..=limit. A negative value is an
-/// expiry already past, which must never arm regardless of the limit.
-pub(crate) fn expiry_gate_met(days_to_expiry: Option<i64>, limit: Option<i64>) -> bool {
-    match (days_to_expiry, limit) {
-        (Some(days), Some(limit)) => (0..=limit).contains(&days),
-        (Some(days), None) => days >= 0,
-        (None, _) => false,
-    }
 }
 
 pub(crate) fn resolve_strategy(
@@ -128,7 +119,7 @@ pub(crate) fn resolve_strategy(
     let days_to_expiry = ist_today()
         .ok()
         .and_then(|today| days_between(&today, &table.expiry).ok());
-    let gate_met = expiry_gate_met(days_to_expiry, strategy.max_days_to_expiry);
+    let gate_met = strategy.dte.allows(days_to_expiry);
 
     // A chain with no lot size cannot size an order: every quantity would be zero.
     let sizing = (table.lot_size == 0).then(|| SizingProblem {
@@ -147,6 +138,7 @@ pub(crate) fn resolve_strategy(
         minutes_until_exit: i64::from(strategy.exit_time.minutes()) - i64::from(now),
         days_to_expiry,
         expiry_gate_met: gate_met,
+        dte_selection: strategy.dte.describe(),
         lot_size: table.lot_size,
         legs,
         problems,

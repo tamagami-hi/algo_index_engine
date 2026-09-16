@@ -1,9 +1,10 @@
 import { create } from "zustand";
-import type { Resolution, Strategy } from "../types/api";
+import type { Resolution, Strategy, Unreadable } from "../types/api";
 import { api } from "../api/client";
 
 interface StrategyStore {
   strategies: Strategy[];
+  unreadable: Unreadable[];
   active: string[];
   resolutions: Record<string, Resolution>;
   busy: string | null;
@@ -18,6 +19,7 @@ interface StrategyStore {
 
 export const useStrategies = create<StrategyStore>((set, get) => ({
   strategies: [],
+  unreadable: [],
   active: [],
   resolutions: {},
   busy: null,
@@ -25,11 +27,16 @@ export const useStrategies = create<StrategyStore>((set, get) => ({
 
   load: async () => {
     try {
-      const [strategies, active] = await Promise.all([
+      const [listing, active] = await Promise.all([
         api.strategies(),
         api.active(),
       ]);
-      set({ strategies, active, error: null });
+      set({
+        strategies: listing.strategies,
+        unreadable: listing.unreadable,
+        active,
+        error: null,
+      });
     } catch (cause) {
       set({ error: String(cause) });
     }

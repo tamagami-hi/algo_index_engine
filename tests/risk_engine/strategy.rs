@@ -1,4 +1,5 @@
 use super::*;
+use crate::risk_engine::strategy::{DteSelection, MAX_DTE};
 use crate::risk_engine::strike::{Moneyness, StrikeCriteria};
 
 fn short_leg(side: Side) -> LegDefinition {
@@ -27,7 +28,7 @@ fn straddle() -> Strategy {
         underlying: "NIFTY".to_owned(),
         entry_time: TimeOfDay::from_minutes(9 * 60 + 16),
         exit_time: TimeOfDay::from_minutes(14 * 60 + 59),
-        max_days_to_expiry: Some(1),
+        dte: DteSelection::default(),
         entry_condition: EntryCondition::ReferenceAbove {
             reference: "INDIA VIX".to_owned(),
             value: 12.0,
@@ -92,6 +93,30 @@ fn an_id_that_would_escape_the_strategy_directory_is_rejected() {
             "{bad} must not be accepted as an id"
         );
     }
+}
+
+#[test]
+fn a_strategy_with_no_dte_selected_is_rejected() {
+    let mut strategy = straddle();
+    strategy.dte = DteSelection::of([]);
+    assert_eq!(strategy.validate(), Err(StrategyError::NoDteSelected));
+}
+
+#[test]
+fn a_dte_outside_the_selectable_range_is_rejected() {
+    for day in [-1, MAX_DTE + 1, 400] {
+        let mut strategy = straddle();
+        strategy.dte = DteSelection::of([0, day]);
+        assert_eq!(
+            strategy.validate(),
+            Err(StrategyError::DteOutOfRange { day, max: MAX_DTE }),
+            "{day}DTE is not selectable"
+        );
+    }
+
+    let mut every_day = straddle();
+    every_day.dte = DteSelection::all();
+    assert_eq!(every_day.validate(), Ok(()));
 }
 
 #[test]

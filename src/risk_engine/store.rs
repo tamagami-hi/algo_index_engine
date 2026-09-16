@@ -76,28 +76,55 @@ pub(crate) fn load(id: &str) -> Result<Strategy> {
     serde_json::from_str(&body).with_context(|| format!("cannot parse {}", path.display()))
 }
 
-pub(crate) fn list() -> Vec<Strategy> {
+/// A saved file that could not be read back. Reported rather than dropped: a
+/// strategy silently vanishing from the list is worse than one showing as broken.
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct Unreadable {
+    pub(crate) file: String,
+    pub(crate) problem: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub(crate) struct Listing {
+    pub(crate) strategies: Vec<Strategy>,
+    pub(crate) unreadable: Vec<Unreadable>,
+}
+
+pub(crate) fn list() -> Listing {
     let Ok(entries) = std::fs::read_dir(directory()) else {
-        return Vec::new();
+        return Listing::default();
     };
 
-    let mut strategies: Vec<Strategy> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension().is_none_or(|extension| extension != "json") {
-                return None;
-            }
-            if path.file_name().is_some_and(|name| name == "active.json") {
-                return None;
-            }
-            let body = std::fs::read_to_string(&path).ok()?;
-            serde_json::from_str::<Strategy>(&body).ok()
-        })
-        .collect();
+    let mut listing = Listing::default();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        if path.file_name().is_some_and(|name| name == "active.json") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("?")
+            .to_owned();
 
-    strategies.sort_by(|left, right| left.id.cmp(&right.id));
-    strategies
+        match std::fs::read_to_string(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|body| serde_json::from_str::<Strategy>(&body).map_err(|e| e.to_string()))
+        {
+            Ok(strategy) => listing.strategies.push(strategy),
+            Err(problem) => listing.unreadable.push(Unreadable {
+                file: name,
+                problem,
+            }),
+        }
+    }
+
+    listing.strategies.sort_by(|left, right| left.id.cmp(&right.id));
+    listing.unreadable.sort_by(|left, right| left.file.cmp(&right.file));
+    listing
 }
 
 pub(crate) fn remove(id: &str) -> Result<()> {

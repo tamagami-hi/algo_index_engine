@@ -70,6 +70,13 @@ pub(crate) fn days_between(from: &str, to: &str) -> Result<i64> {
         - days_from_civil(from_year, from_month, from_day))
 }
 
+#[cfg(test)]
+pub(crate) fn shift_iso_date(date: &str, days: i64) -> Result<String> {
+    let (year, month, day) = parse_iso_date(date)?;
+    let (year, month, day) = civil_from_days(days_from_civil(year, month, day) + days);
+    Ok(format!("{year:04}-{month:02}-{day:02}"))
+}
+
 pub(crate) fn parse_iso_date(value: &str) -> Result<(i64, i64, i64)> {
     let bytes = value.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {

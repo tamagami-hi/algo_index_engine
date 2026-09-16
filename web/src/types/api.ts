@@ -180,6 +180,11 @@ export interface OverallRisk {
   daily_profit_target?: number;
 }
 
+export const MAX_DTE = 6;
+export const DTE_CHOICES: number[] = Array.from({ length: MAX_DTE + 1 }, (_, day) => day);
+
+export type DteSelection = number[];
+
 export interface Strategy {
   id: string;
   name: string;
@@ -187,11 +192,21 @@ export interface Strategy {
   underlying: string;
   entry_time: string;
   exit_time: string;
-  max_days_to_expiry?: number;
+  dte: DteSelection;
   entry_condition: EntryCondition;
   legs: LegDefinition[];
   overall: OverallRisk;
   loss_coverage: LossCoverage;
+}
+
+export interface Unreadable {
+  file: string;
+  problem: string;
+}
+
+export interface Listing {
+  strategies: Strategy[];
+  unreadable: Unreadable[];
 }
 
 export interface ResolvedLeg {
@@ -229,6 +244,7 @@ export interface Resolution {
   minutes_until_exit: number;
   days_to_expiry: number | null;
   expiry_gate_met: boolean;
+  dte_selection: string;
   lot_size: number;
   legs: ResolvedLeg[];
   problems: LegProblem[];
