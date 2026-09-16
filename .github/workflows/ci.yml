@@ -1,0 +1,199 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install the toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: formatting
+        run: cargo fmt --check
+
+      - name: lints
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: tests
+        run: cargo test --locked --all-features
+
+      - name: release build for the deployment target
+        run: RUSTFLAGS="${RUSTFLAGS} -C target-cpu=x86-64-v3" cargo build --locked --release
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: measure coverage
+        run: cargo llvm-cov --locked --all-features --summary-only
+
+      - name: export coverage
+        run: cargo llvm-cov report --lcov --output-path rust-coverage.lcov
+
+      - name: upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: rust-coverage.lcov
+          if-no-files-found: error
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: install
+        run: npm ci
+
+      - name: types
+        run: npm run typecheck
+
+      - name: tests and coverage
+        run: npm run coverage
+
+      - name: upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: web/coverage/coverage-summary.json
+          if-no-files-found: error
+
+      - name: production build
+        run: npm run build
+
+  deployment:
+    name: deployment scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: syntax
+        run: |
+          fail=0
+          while IFS= read -r -d '' script; do
+            bash -n "$script" || { echo "syntax error: $script"; fail=1; }
+          done < <(find release_manager -name '*.sh' -print0)
+          exit "$fail"
+
+      # -x follows sourced files; the shared library is sourced, not executed.
+      - name: shellcheck
+        run: find release_manager -name '*.sh' -print0 | xargs -0 shellcheck -x -P SCRIPTDIR -S warning
+
+      - name: path contract is valid json
+        run: jq empty release_manager/stacks/index_engine/paths.json
+
+      - name: rollback restores a coherent release
+        run: bash release_manager/tests/rollback_pairing.sh
+
+      - name: an open control surface is refused
+        run: bash release_manager/tests/access_control.sh
+
+  image:
+    name: container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: algo-index-engine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The engine must come up far enough to serve liveness with no broker
+      # credentials present, and must report itself NOT ready while it has no
+      # market data. Both directions matter: a container that answers /ready
+      # without a feed would let a broken release pass a deployment health gate.
+      - name: liveness and readiness without credentials
+        run: |
+          docker run -d --name aie-ci -p 127.0.0.1:8081:8081 \
+            -e BLACKBOX_HTTP_ADDR=0.0.0.0:8081 algo-index-engine:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS -m 2 http://127.0.0.1:8081/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
+          echo "--- /health"
+          curl -fsS -m 5 http://127.0.0.1:8081/health | tee /tmp/health.json
+          jq -e '.alive == true' /tmp/health.json
+
+          echo "--- /ready"
+          code="$(curl -s -o /tmp/ready.json -w '%{http_code}' -m 5 http://127.0.0.1:8081/ready)"
+          cat /tmp/ready.json
+          test "$code" = "503" || { echo "expected 503 with no feed, got $code"; exit 1; }
+          jq -e '.ready == false and (.reasons | length) > 0' /tmp/ready.json
+
+          echo "--- the frontend is baked into the image"
+          docker exec aie-ci test -f /app/web/dist/index.html
+
+      - name: container logs on failure
+        if: failure()
+        run: docker logs aie-ci
+
+      - name: remove the test container
+        if: always()
+        run: |
+          if docker container inspect aie-ci >/dev/null 2>&1; then
+            docker rm -f aie-ci
+          fi

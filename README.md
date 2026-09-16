@@ -63,7 +63,8 @@ docker compose up --build -d
 docker compose logs -f
 ```
 
-The image is a two-stage build on `debian:bookworm-slim`, runs as a non-root user, and
+The image builds the frontend and Rust binary in separate stages, uses
+`debian:bookworm-slim` at runtime, runs as a non-root user, and
 carries no configuration or market data. `.dockerignore` keeps `.env`, `data/` and
 `target/` out of the build context, so nothing secret is ever baked into a layer.
 
@@ -88,15 +89,27 @@ Images are built here and shipped as tarballs; the VPS never compiles anything. 
 remote path comes from `release_manager/stacks/index_engine/paths.json`, which is the sole
 path authority.
 
-`.env` on the server is placed and owned by the operator. No script in the pipeline
-reads, writes, chmods or removes it.
+`.env` on the server is placed and owned by the operator. The pipeline does not
+modify or copy it; release manifests record its digest to detect configuration drift.
 
-## Public site
+## Web interface and access
 
-The public site is not configured for this engine yet: `web.enabled` is false in the path contract and no hostname is assigned.
-stack with automatic Let's Encrypt TLS. Content lives in `web/` and is versioned with
-the release. It is static only — no account, position or strategy data is exposed, and
-the engine has no HTTP surface. See `release_manager/README.md`.
+The engine serves its React interface and HTTP API from the same process. Build the
+interface with `cd web && npm ci && npm run build`; containers include it already.
+Local runs listen on `127.0.0.1:8081` by default. `BLACKBOX_HTTP_ADDR` overrides the
+listener; Compose publishes it only on host loopback.
+
+The interface shows market telemetry, option chains, and saved strategy definitions
+with entry blockers. Live order routing is not implemented. `/health` reports process
+liveness; `/ready` returns 503 with reasons when the engine lacks usable market data.
+By default, SSE updates publish at most every 50 ms, while the engine processes every
+feed frame. `BLACKBOX_PUBLISH_INTERVAL_MS` configures the publish interval.
+
+Access control belongs at the Tailscale/nginx edge. Deployment checks require loopback
+port bindings and, when configured, a restrictive nginx vhost. The edge configurations
+and installation instructions live in [release_manager/nginx](release_manager/nginx/).
+The separate public-site stack remains disabled. See
+[the deployment guide](release_manager/README.md).
 
 Deploy to AWS `ap-south-1` (Mumbai). Dhan's infrastructure is in Mumbai, and a US region
 adds roughly 200ms round trip, which is longer than the opportunities this strategy is
@@ -148,6 +161,43 @@ the IST trading day. If today's file is already there it is reused and no downlo
 happens, so repeated restarts cost nothing. The same date drives the option-chain expiry
 filter, so the file and the chains can never disagree about which day it is.
 
+## CI and verification
+
+[The CI workflow](.github/workflows/ci.yml) runs on pushes to `main`, pull requests,
+and manual dispatch. It checks Rust formatting, Clippy with warnings denied, tests,
+and a release build for `x86-64-v3`; frontend types, tests with coverage, and production
+build; shell syntax, ShellCheck, and offline rollback/access-control regressions.
+It also builds the container and checks that it serves liveness, refuses readiness
+without broker credentials, and includes the frontend. No deployment is performed.
+
+Rust LCOV and frontend coverage summaries are uploaded as workflow artifacts.
+Coverage is reported without a percentage gate. The recorded Rust baseline at
+commit `36cf54b` is 57.48% lines and 58.61% regions; frontend coverage is
+52.89% lines/statements. These figures do not meet the 80% target. Tests currently
+focus on quote validity and freshness, strategy constraints, task supervision,
+broker/session handling, and the operator's view of stale data.
+
+Run the checks locally with:
+
+```sh
+cargo fmt --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+cargo llvm-cov --locked --all-features --summary-only
+npm --prefix web ci
+npm --prefix web run typecheck
+npm --prefix web run coverage
+npm --prefix web run build
+find release_manager -name '*.sh' -print0 | xargs -0 shellcheck -x -P SCRIPTDIR -S warning
+bash release_manager/tests/rollback_pairing.sh
+bash release_manager/tests/access_control.sh
+```
+
+Coverage requires `cargo-llvm-cov` and the Rust `llvm-tools-preview` component;
+deployment checks require Bash, ShellCheck, and jq. Broker tests use local mocks.
+The container smoke test verifies startup without credentials, not live broker
+connectivity or order execution.
+
 ## Layout
 
 ```
@@ -160,10 +210,18 @@ src/
     instruments/  instrument master parsing, option chains, subscription planning
     dhan_ws.rs    live feed socket
     instrument_dl.rs  instrument master download
+  option_chain/  chain book, metrics, and quote freshness checks
+  risk_engine/   strategy definitions, persistence, and entry resolution
+  server/        HTTP/SSE, engine state, and task supervision
 data/
   instruments/    instrument master CSV per date (gitignored)
   sessions/       saved tokens (gitignored, owner-only)
+  strategies/     saved strategy definitions
+  state/          active strategy IDs
 tests/            mirrors src, for the sensitive areas only
-Dockerfile        two-stage release build
+web/src/          React interface and stores
+web/tests/        frontend behaviour tests mirroring web/src
+.github/workflows/ci.yml  automated verification
+Dockerfile        frontend and Rust release build
 compose.yaml      engine service and its data volume
 ```
