@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -13,6 +14,8 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream::{self, Stream};
+use tokio::sync::watch;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use serde::{Deserialize, Serialize};
@@ -30,14 +33,46 @@ pub(crate) struct StreamParams {
 
 #[derive(Debug, Serialize)]
 struct StreamFrame {
+    sequence: u64,
+    published_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feed_age_ms: Option<u64>,
+    publish_interval_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain: Option<ChainColumns>,
     state: Snapshot,
 }
 
-const DEFAULT_ADDR: &str = "0.0.0.0:8081";
+const DEFAULT_ADDR: &str = "127.0.0.1:8081";
 const WEB_ROOT: &str = "web/dist";
 const ADDR_VARIABLE: &str = "BLACKBOX_HTTP_ADDR";
+const PUBLISH_INTERVAL_VARIABLE: &str = "BLACKBOX_PUBLISH_INTERVAL_MS";
+const DEFAULT_PUBLISH_INTERVAL_MS: u64 = 50;
+
+fn publish_interval() -> Duration {
+    let millis = std::env::var(PUBLISH_INTERVAL_VARIABLE)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PUBLISH_INTERVAL_MS);
+    Duration::from_millis(millis)
+}
+
+struct StreamGuard {
+    chain: Option<String>,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        tracing::info!(chain = ?self.chain, "stream client disconnected");
+    }
+}
+
+struct StreamState {
+    receiver: watch::Receiver<Snapshot>,
+    first: bool,
+    last_publish: Option<Instant>,
+    _guard: StreamGuard,
+}
 
 #[derive(Clone)]
 struct Http {
@@ -254,31 +289,83 @@ async fn api_chain(State(http): State<Http>, Path(symbol): Path<String>) -> Resp
     }
 }
 
+async fn wait_to_publish(
+    receiver: &mut watch::Receiver<Snapshot>,
+    last_publish: Option<Instant>,
+    interval: Duration,
+    shutdown: &CancellationToken,
+) -> bool {
+    tokio::select! {
+        () = shutdown.cancelled() => return false,
+        changed = receiver.changed() => {
+            if changed.is_err() {
+                return false;
+            }
+        }
+    }
+
+    if let Some(previous) = last_publish {
+        let earliest = previous + interval;
+        if Instant::now() < earliest {
+            tokio::select! {
+                () = shutdown.cancelled() => return false,
+                () = tokio::time::sleep_until(earliest) => {}
+            }
+        }
+    }
+
+    true
+}
+
 async fn api_stream(
     State(http): State<Http>,
     Query(params): Query<StreamParams>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let receiver = http.engine.subscribe();
     let shutdown = http.shutdown;
     let engine = http.engine;
     let chain = params.chain;
+    let interval = publish_interval();
 
-    let stream = stream::unfold((receiver, true), move |(mut receiver, first)| {
+    tracing::info!(chain = ?chain, interval_ms = interval.as_millis(), "stream client connected");
+
+    let start = StreamState {
+        receiver: engine.subscribe(),
+        first: true,
+        last_publish: None,
+        _guard: StreamGuard {
+            chain: chain.clone(),
+        },
+    };
+
+    let stream = stream::unfold(start, move |mut state| {
         let shutdown = shutdown.clone();
         let engine = engine.clone();
         let chain = chain.clone();
         async move {
-            if !first {
-                tokio::select! {
-                    () = shutdown.cancelled() => return None,
-                    changed = receiver.changed() => changed.ok()?,
-                }
+            if state.first {
+                state.first = false;
+            } else if !wait_to_publish(&mut state.receiver, state.last_publish, interval, &shutdown)
+                .await
+            {
+                return None;
             }
-            let mut snapshot = receiver.borrow_and_update().clone();
+
+            state.last_publish = Some(Instant::now());
+
+            let mut snapshot = state.receiver.borrow_and_update().clone();
             snapshot.uptime_seconds =
                 (crate::server::state::now_millis() - snapshot.started_at_ms) / 1_000;
 
+            let feed_age_ms = snapshot
+                .feed
+                .last_frame_at
+                .map(crate::option_chain::quality::age_since);
+
             let payload = StreamFrame {
+                sequence: snapshot.sequence,
+                published_at_ms: crate::server::state::now_millis(),
+                feed_age_ms,
+                publish_interval_ms: interval.as_millis() as u64,
                 chain: chain
                     .as_deref()
                     .and_then(|symbol| engine.chain_columns(symbol)),
@@ -287,7 +374,7 @@ async fn api_stream(
             let encoded = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_owned());
             Some((
                 Ok::<Event, Infallible>(Event::default().data(encoded)),
-                (receiver, false),
+                state,
             ))
         }
     });
@@ -309,6 +396,10 @@ fn failed(status: StatusCode, error: impl std::fmt::Display) -> Response {
     let message = error.to_string().replace('"', "'").replace('\n', " ");
     json(status, format!("{{\"error\":\"{message}\"}}"))
 }
+
+#[cfg(test)]
+#[path = "../../tests/server/http.rs"]
+mod tests;
 
 async fn api_strategies() -> Response {
     encoded(StatusCode::OK, &risk_engine::store::list())

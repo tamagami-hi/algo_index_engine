@@ -156,6 +156,7 @@ pub(crate) struct ChainSummaryView {
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Snapshot {
     pub(crate) version: &'static str,
+    pub(crate) sequence: u64,
     pub(crate) phase: Phase,
     pub(crate) phase_label: &'static str,
     pub(crate) detail: String,
@@ -172,6 +173,7 @@ impl Snapshot {
     fn new(now: i64) -> Self {
         Self {
             version: VERSION,
+            sequence: 0,
             phase: Phase::Starting,
             phase_label: Phase::Starting.label(),
             detail: String::new(),
@@ -215,6 +217,7 @@ impl EngineState {
         self.sender.send_modify(|snapshot| {
             apply(snapshot);
             let now = now_millis();
+            snapshot.sequence = snapshot.sequence.wrapping_add(1);
             snapshot.updated_at_ms = now;
             snapshot.uptime_seconds = (now - snapshot.started_at_ms) / 1_000;
             snapshot.phase_label = snapshot.phase.label();
