@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_util::sync::CancellationToken;
 
 use crate::server::state::EngineState;
 
@@ -10,19 +11,36 @@ pub(crate) async fn ws_dhan_connection(
     client_id: &str,
     access_token: &str,
     state: &EngineState,
+    shutdown: &CancellationToken,
 ) -> Result<()> {
     let ws_url = format!(
         "{DHAN_WEBSOCKET_URL}?version=2&token={access_token}&clientId={client_id}&authType=2"
     );
 
-    let (mut ws_stream, response) = connect_async(&ws_url)
-        .await
-        .context("Failed to connect to Dhan WebSocket")?;
+    let (mut ws_stream, response) = tokio::select! {
+        () = shutdown.cancelled() => return Ok(()),
+        connected = connect_async(&ws_url) => {
+            connected.context("Failed to connect to Dhan WebSocket")?
+        }
+    };
 
     println!("Dhan feed connected: HTTP {}", response.status());
     state.feed_connected();
 
-    while let Some(message) = ws_stream.next().await {
+    let mut cancelled = false;
+    loop {
+        let next = tokio::select! {
+            () = shutdown.cancelled() => {
+                cancelled = true;
+                None
+            }
+            message = ws_stream.next() => message,
+        };
+
+        let Some(message) = next else {
+            break;
+        };
+
         match message.context("Failed to read Dhan WebSocket message")? {
             Message::Binary(data) => {
                 state.feed_frame(data.len());
@@ -43,6 +61,11 @@ pub(crate) async fn ws_dhan_connection(
             }
             Message::Pong(_) | Message::Frame(_) => {}
         }
+    }
+
+    if cancelled {
+        println!("closing the Dhan feed");
+        let _ = ws_stream.send(Message::Close(None)).await;
     }
 
     Ok(())

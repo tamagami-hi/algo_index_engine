@@ -17,3 +17,4 @@ tracing-subscriber = "0.3.23"
 time = { version = "0.3.55", features = ["parsing", "macros"] }
 tempfile = "3.27"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio-util = "0.7.19"

@@ -13,11 +13,18 @@ use axum::{
     routing::get,
 };
 use futures_util::stream::{self, Stream};
+use tokio_util::sync::CancellationToken;
 
 use crate::server::state::EngineState;
 
 const DEFAULT_ADDR: &str = "0.0.0.0:8081";
 const ADDR_VARIABLE: &str = "BLACKBOX_HTTP_ADDR";
+
+#[derive(Clone)]
+struct Http {
+    engine: EngineState,
+    shutdown: CancellationToken,
+}
 
 pub(crate) fn listen_addr() -> Result<SocketAddr> {
     let raw = std::env::var(ADDR_VARIABLE).unwrap_or_else(|_| DEFAULT_ADDR.to_owned());
@@ -25,13 +32,20 @@ pub(crate) fn listen_addr() -> Result<SocketAddr> {
         .with_context(|| format!("{ADDR_VARIABLE} is not a valid socket address: {raw}"))
 }
 
-pub(crate) async fn serve(state: EngineState, addr: SocketAddr) -> Result<()> {
+pub(crate) async fn serve(
+    engine: EngineState,
+    addr: SocketAddr,
+    shutdown: CancellationToken,
+) -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api/state", get(api_state))
         .route("/api/stream", get(api_stream))
-        .with_state(state);
+        .with_state(Http {
+            engine,
+            shutdown: shutdown.clone(),
+        });
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -40,8 +54,12 @@ pub(crate) async fn serve(state: EngineState, addr: SocketAddr) -> Result<()> {
     println!("HTTP server listening on {addr}");
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(async move { shutdown.cancelled().await })
         .await
-        .context("HTTP server failed")
+        .context("HTTP server failed")?;
+
+    println!("HTTP server drained");
+    Ok(())
 }
 
 fn json(status: StatusCode, body: String) -> Response {
@@ -60,38 +78,47 @@ fn encode(state: &EngineState) -> String {
     serde_json::to_string(&state.snapshot()).unwrap_or_else(|_| "{}".to_owned())
 }
 
-async fn health(State(state): State<EngineState>) -> Response {
-    json(StatusCode::OK, encode(&state))
+async fn health(State(http): State<Http>) -> Response {
+    json(StatusCode::OK, encode(&http.engine))
 }
 
-async fn ready(State(state): State<EngineState>) -> Response {
-    let snapshot = state.snapshot();
+async fn ready(State(http): State<Http>) -> Response {
+    let snapshot = http.engine.snapshot();
     let status = if snapshot.phase.is_healthy() {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    json(status, encode(&state))
+    json(status, encode(&http.engine))
 }
 
-async fn api_state(State(state): State<EngineState>) -> Response {
-    json(StatusCode::OK, encode(&state))
+async fn api_state(State(http): State<Http>) -> Response {
+    json(StatusCode::OK, encode(&http.engine))
 }
 
-async fn api_stream(State(state): State<EngineState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let receiver = state.subscribe();
+async fn api_stream(
+    State(http): State<Http>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let receiver = http.engine.subscribe();
+    let shutdown = http.shutdown;
 
-    let stream = stream::unfold((receiver, true), |(mut receiver, first)| async move {
-        if !first && receiver.changed().await.is_err() {
-            return None;
+    let stream = stream::unfold((receiver, true), move |(mut receiver, first)| {
+        let shutdown = shutdown.clone();
+        async move {
+            if !first {
+                tokio::select! {
+                    () = shutdown.cancelled() => return None,
+                    changed = receiver.changed() => changed.ok()?,
+                }
+            }
+            let mut snapshot = receiver.borrow_and_update().clone();
+            snapshot.uptime_seconds = crate::server::state::now_unix() - snapshot.started_at;
+            let payload = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_owned());
+            Some((
+                Ok::<Event, Infallible>(Event::default().data(payload)),
+                (receiver, false),
+            ))
         }
-        let mut snapshot = receiver.borrow_and_update().clone();
-        snapshot.uptime_seconds = crate::server::state::now_unix() - snapshot.started_at;
-        let payload = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_owned());
-        Some((
-            Ok::<Event, Infallible>(Event::default().data(payload)),
-            (receiver, false),
-        ))
     });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
