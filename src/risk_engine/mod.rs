@@ -4,10 +4,14 @@ pub(crate) mod strike;
 
 use serde::Serialize;
 
-use crate::dhan_api::instruments::ist_minutes_now;
+use crate::dhan_api::instruments::{days_between, ist_minutes_now, ist_today};
 use crate::option_chain::table::OptionTable;
 use strategy::Strategy;
 use strike::{ResolvedStrike, StrikeError, resolve};
+
+#[cfg(test)]
+#[path = "../../tests/risk_engine/gate.rs"]
+mod tests;
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ResolvedLeg {
@@ -39,9 +43,21 @@ pub(crate) struct Resolution {
     pub(crate) entry_condition_met: bool,
     pub(crate) within_trading_window: bool,
     pub(crate) minutes_until_exit: i64,
+    pub(crate) days_to_expiry: Option<i64>,
+    pub(crate) expiry_gate_met: bool,
     pub(crate) legs: Vec<ResolvedLeg>,
     pub(crate) problems: Vec<LegProblem>,
     pub(crate) would_enter_now: bool,
+}
+
+/// 0DTE and 1DTE mean days_to_expiry in 0..=limit. A negative value is an
+/// expiry already past, which must never arm regardless of the limit.
+pub(crate) fn expiry_gate_met(days_to_expiry: Option<i64>, limit: Option<i64>) -> bool {
+    match (days_to_expiry, limit) {
+        (Some(days), Some(limit)) => (0..=limit).contains(&days),
+        (Some(days), None) => days >= 0,
+        (None, _) => false,
+    }
 }
 
 pub(crate) fn resolve_strategy(
@@ -100,6 +116,11 @@ pub(crate) fn resolve_strategy(
         now >= strategy.entry_time.minutes() && now < strategy.exit_time.minutes();
     let complete = problems.is_empty() && !legs.is_empty();
 
+    let days_to_expiry = ist_today()
+        .ok()
+        .and_then(|today| days_between(&today, &table.expiry).ok());
+    let gate_met = expiry_gate_met(days_to_expiry, strategy.max_days_to_expiry);
+
     Resolution {
         id: strategy.id.clone(),
         underlying: strategy.underlying.clone(),
@@ -109,8 +130,13 @@ pub(crate) fn resolve_strategy(
         entry_condition_met,
         within_trading_window,
         minutes_until_exit: i64::from(strategy.exit_time.minutes()) - i64::from(now),
+        days_to_expiry,
+        expiry_gate_met: gate_met,
         legs,
         problems,
-        would_enter_now: complete && entry_condition_met && within_trading_window,
+        would_enter_now: complete
+            && entry_condition_met
+            && within_trading_window
+            && gate_met,
     }
 }

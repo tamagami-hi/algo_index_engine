@@ -52,6 +52,24 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_position = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_position + 2) / 5 + day - 1;
+    let day_of_era =
+        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+pub(crate) fn days_between(from: &str, to: &str) -> Result<i64> {
+    let (from_year, from_month, from_day) = parse_iso_date(from)?;
+    let (to_year, to_month, to_day) = parse_iso_date(to)?;
+    Ok(days_from_civil(to_year, to_month, to_day)
+        - days_from_civil(from_year, from_month, from_day))
+}
+
 pub(crate) fn parse_iso_date(value: &str) -> Result<(i64, i64, i64)> {
     let bytes = value.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
@@ -86,3 +104,7 @@ fn days_in_month(year: i64, month: i64) -> i64 {
 fn is_leap_year(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
+
+#[cfg(test)]
+#[path = "../../../tests/dhan_api/instruments/trading_day.rs"]
+mod tests;

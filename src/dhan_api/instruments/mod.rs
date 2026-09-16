@@ -24,4 +24,4 @@ pub(crate) use subscription::{
     Catalog, CatalogReport, ChainSummary, ChainUnderlying, MAX_INSTRUMENTS, MAX_PER_MESSAGE, Pool,
     Subscription, build_catalog,
 };
-pub(crate) use trading_day::{ist_minutes_now, ist_today};
+pub(crate) use trading_day::{days_between, ist_minutes_now, ist_today};

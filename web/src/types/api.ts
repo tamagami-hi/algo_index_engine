@@ -227,6 +227,8 @@ export interface Resolution {
   entry_condition_met: boolean;
   within_trading_window: boolean;
   minutes_until_exit: number;
+  days_to_expiry: number | null;
+  expiry_gate_met: boolean;
   legs: ResolvedLeg[];
   problems: LegProblem[];
   would_enter_now: boolean;

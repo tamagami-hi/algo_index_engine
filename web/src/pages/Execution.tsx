@@ -42,6 +42,11 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
         <span className={resolution.within_trading_window ? "tag live" : "tag"}>
           {resolution.within_trading_window ? "in window" : "out of window"}
         </span>
+        <span className={resolution.expiry_gate_met ? "tag live" : "tag"}>
+          {resolution.days_to_expiry === null
+            ? "expiry unknown"
+            : `${resolution.days_to_expiry}DTE`}
+        </span>
         <span className={resolution.would_enter_now ? "tag live" : "tag"}>
           {resolution.would_enter_now ? "would enter now" : "would not enter"}
         </span>
