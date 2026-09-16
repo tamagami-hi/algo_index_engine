@@ -27,12 +27,12 @@
     "lock_file": "/tmp/algo-index-engine.lock"
   },
   "backup": {
-    "root": "/srv/dev_stack/ALGO_INDEX_ENGINE/backup",
-    "rollback_root": "/srv/dev_stack/ALGO_INDEX_ENGINE/backup/rollback",
-    "rollback_images": "/srv/dev_stack/ALGO_INDEX_ENGINE/backup/rollback/images",
-    "logs_root": "/srv/dev_stack/ALGO_INDEX_ENGINE/logs",
-    "deploy_log": "/srv/dev_stack/ALGO_INDEX_ENGINE/logs/deploy",
-    "app_log": "/srv/dev_stack/ALGO_INDEX_ENGINE/logs/app"
+    "root": "/srv/backup/ALGO_INDEX_ENGINE/backup",
+    "rollback_root": "/srv/backup/ALGO_INDEX_ENGINE/backup/rollback",
+    "rollback_images": "/srv/backup/ALGO_INDEX_ENGINE/backup/rollback/images",
+    "logs_root": "/srv/backup/ALGO_INDEX_ENGINE/logs",
+    "deploy_log": "/srv/backup/ALGO_INDEX_ENGINE/logs/deploy",
+    "app_log": "/srv/backup/ALGO_INDEX_ENGINE/logs/app"
   },
   "images": [
     {
