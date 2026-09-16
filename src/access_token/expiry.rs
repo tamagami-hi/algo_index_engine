@@ -121,8 +121,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let year_of_era = year - era * 400;
     let month_position = (month + 9) % 12;
     let day_of_year = (153 * month_position + 2) / 5 + day - 1;
-    let day_of_era =
-        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
 

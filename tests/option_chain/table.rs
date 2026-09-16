@@ -75,8 +75,20 @@ fn only_the_requested_expiry_and_underlying_enter_the_table() {
     let master = InstrumentMaster {
         options: vec![
             contract("NIFTY", "2026-09-22", 25_000.0, OptionType::Call, "keep"),
-            contract("NIFTY", "2026-09-29", 25_000.0, OptionType::Call, "next-expiry"),
-            contract("BANKNIFTY", "2026-09-22", 25_000.0, OptionType::Call, "other"),
+            contract(
+                "NIFTY",
+                "2026-09-29",
+                25_000.0,
+                OptionType::Call,
+                "next-expiry",
+            ),
+            contract(
+                "BANKNIFTY",
+                "2026-09-22",
+                25_000.0,
+                OptionType::Call,
+                "other",
+            ),
         ],
         spots: Vec::new(),
         report: Default::default(),

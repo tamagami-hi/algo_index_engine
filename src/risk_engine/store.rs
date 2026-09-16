@@ -58,7 +58,10 @@ fn write_atomically(path: &Path, body: &str) -> Result<()> {
 pub(crate) fn save(strategy: &Strategy) -> Result<()> {
     let _lock = guard();
     if let Err(problem) = strategy.validate() {
-        bail!("strategy is not valid: {}", serde_json::to_string(&problem)?);
+        bail!(
+            "strategy is not valid: {}",
+            serde_json::to_string(&problem)?
+        );
     }
     let body = serde_json::to_string_pretty(strategy).context("cannot encode strategy")?;
     write_atomically(&definition_path(&strategy.id), &body)
@@ -115,8 +118,12 @@ pub(crate) fn list() -> Listing {
         }
     }
 
-    listing.strategies.sort_by(|left, right| left.id.cmp(&right.id));
-    listing.unreadable.sort_by(|left, right| left.file.cmp(&right.file));
+    listing
+        .strategies
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    listing
+        .unreadable
+        .sort_by(|left, right| left.file.cmp(&right.file));
     listing
 }
 

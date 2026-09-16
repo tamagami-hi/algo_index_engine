@@ -132,7 +132,10 @@ fn a_spot_packet_sets_the_chain_spot_and_a_reference_index_is_tracked_separately
         "25063 rounds down on a 50-point chain"
     );
 
-    assert_eq!(book.stats().2.get("INDIA VIX").copied(), Some(11.85_f32 as f64));
+    assert_eq!(
+        book.stats().2.get("INDIA VIX").copied(),
+        Some(11.85_f32 as f64)
+    );
     assert_eq!(
         book.stats().2.get("NIFTY").copied(),
         Some(25_063.4_f32 as f64),
@@ -204,7 +207,6 @@ fn an_unknown_symbol_has_no_view() {
     assert!(book.view("nifty").is_some(), "lookup is case-insensitive");
 }
 
-
 #[test]
 fn the_wire_encoding_drops_f32_noise_without_moving_a_price() {
     let (master, catalog) = fixture();
@@ -216,7 +218,7 @@ fn the_wire_encoding_drops_f32_noise_without_moving_a_price() {
     let encoded = serde_json::to_string(&columns).expect("encode");
 
     assert!(
-        encoded.contains("\"ltp\":[129.3,0,0]"),
+        encoded.contains("\"ltp\":[129.3,null,null]"),
         "the exchange sent 129.3 and the wire must say 129.3, not the f32 widening: {encoded}"
     );
     assert!(
@@ -225,14 +227,14 @@ fn the_wire_encoding_drops_f32_noise_without_moving_a_price() {
     );
     assert!(
         encoded.contains("\"bid_quantity\":[750,0,0]"),
-        "an integral quantity carries no decimal point: {encoded}"
+        "an integral quantity carries no decimal point, and zero size is a real zero: {encoded}"
     );
     assert!(
         encoded.contains("\"strike\":[25000,25050,25100]"),
         "strikes are whole numbers: {encoded}"
     );
     assert!(
-        encoded.contains("\"ltp\":[87.45,0,0]"),
+        encoded.contains("\"ltp\":[87.45,null,null]"),
         "two decimals of premium survive: {encoded}"
     );
 
@@ -254,9 +256,191 @@ fn a_non_finite_cell_is_null_rather_than_a_fabricated_zero() {
     let columns = book.columns("NIFTY").expect("columns");
     let encoded = serde_json::to_string(&columns).expect("a non-finite cell must still encode");
     assert!(
-        encoded.contains("\"ltp\":[null,0,0]"),
+        encoded.contains("\"ltp\":[null,null,null]"),
         "an unusable price is absent, not zero: {encoded}"
     );
+}
+
+fn depthless_full(security_id: i32, ltp: f32) -> Message {
+    Message {
+        header: Header {
+            code: crate::dhan_api::feed::CODE_FULL,
+            declared_len: 162,
+            segment: Some(ExchangeSegment::NseFno),
+            security_id,
+        },
+        packet: Packet::Full(Full {
+            last_price: ltp,
+            volume: 4_200,
+            open_interest: 120_000,
+            depth: [DepthLevel::default(); 5],
+            ..Full::default()
+        }),
+    }
+}
+
+fn one_sided_full(security_id: i32, ltp: f32, bid: f32, ask: f32) -> Message {
+    let mut depth = [DepthLevel::default(); 5];
+    depth[0] = DepthLevel {
+        bid_quantity: if bid > 0.0 { 750 } else { 0 },
+        ask_quantity: if ask > 0.0 { 900 } else { 0 },
+        bid_orders: 0,
+        ask_orders: 0,
+        bid_price: bid,
+        ask_price: ask,
+    };
+    Message {
+        header: Header {
+            code: crate::dhan_api::feed::CODE_FULL,
+            declared_len: 162,
+            segment: Some(ExchangeSegment::NseFno),
+            security_id,
+        },
+        packet: Packet::Full(Full {
+            last_price: ltp,
+            volume: 4_200,
+            open_interest: 120_000,
+            depth,
+            ..Full::default()
+        }),
+    }
+}
+
+fn call_row_zero(book: &ChainBook) -> (f64, f64, f64, f64) {
+    let table = book.table("NIFTY").expect("table");
+    (
+        table.calls.bid[0],
+        table.calls.bid_quantity[0],
+        table.calls.ask[0],
+        table.calls.ask_quantity[0],
+    )
+}
+
+#[test]
+fn a_bid_that_disappears_is_cleared_rather_than_left_standing() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+
+    book.apply(&full_message(101, 130.0, 120.50, 131.0, 120_000));
+    assert_eq!(call_row_zero(&book).0, 120.50);
+
+    book.apply(&one_sided_full(101, 130.0, 0.0, 131.0));
+    let (bid, bid_quantity, ask, _) = call_row_zero(&book);
+    assert_eq!(
+        bid, 0.0,
+        "the 120.50 bid is gone from the market and must be gone from the book"
+    );
+    assert_eq!(
+        bid_quantity, 0.0,
+        "phantom size is as bad as a phantom price"
+    );
+    assert_eq!(ask, 131.0, "the ask was still quoted and must survive");
+}
+
+#[test]
+fn an_ask_that_disappears_is_cleared_rather_than_left_standing() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+
+    book.apply(&full_message(101, 130.0, 129.0, 131.0, 120_000));
+    assert_eq!(call_row_zero(&book).2, 131.0);
+
+    book.apply(&one_sided_full(101, 130.0, 129.0, 0.0));
+    let (bid, _, ask, ask_quantity) = call_row_zero(&book);
+    assert_eq!(ask, 0.0, "the 131.0 ask is gone");
+    assert_eq!(ask_quantity, 0.0);
+    assert_eq!(bid, 129.0, "the bid was still quoted and must survive");
+}
+
+#[test]
+fn a_full_packet_with_no_depth_at_all_clears_both_sides() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+
+    book.apply(&full_message(101, 130.0, 129.0, 131.0, 120_000));
+    book.apply(&depthless_full(101, 130.0));
+
+    let (bid, bid_quantity, ask, ask_quantity) = call_row_zero(&book);
+    assert_eq!((bid, bid_quantity, ask, ask_quantity), (0.0, 0.0, 0.0, 0.0));
+
+    let columns = book.columns("NIFTY").expect("columns");
+    let encoded = serde_json::to_string(&columns).expect("encode");
+    assert!(
+        encoded.contains("\"bid\":[null,null,null]")
+            && encoded.contains("\"ask\":[null,null,null]"),
+        "the browser must see an empty side, not the last price it had: {encoded}"
+    );
+}
+
+#[test]
+fn a_partial_packet_does_not_erase_a_quote_it_never_carried() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+
+    book.apply(&full_message(101, 130.0, 129.0, 131.0, 120_000));
+
+    for partial in [
+        Message {
+            header: Header {
+                code: crate::dhan_api::feed::CODE_TICKER,
+                declared_len: 16,
+                segment: Some(ExchangeSegment::NseFno),
+                security_id: 101,
+            },
+            packet: Packet::Ticker {
+                last_price: 132.0,
+                last_trade_time: 1,
+            },
+        },
+        Message {
+            header: Header {
+                code: crate::dhan_api::feed::CODE_QUOTE,
+                declared_len: 50,
+                segment: Some(ExchangeSegment::NseFno),
+                security_id: 101,
+            },
+            packet: Packet::Quote {
+                last_price: 133.0,
+                volume: 5_000,
+            },
+        },
+        Message {
+            header: Header {
+                code: crate::dhan_api::feed::CODE_OI,
+                declared_len: 12,
+                segment: Some(ExchangeSegment::NseFno),
+                security_id: 101,
+            },
+            packet: Packet::OpenInterest {
+                open_interest: 130_000,
+            },
+        },
+    ] {
+        book.apply(&partial);
+        let (bid, _, ask, _) = call_row_zero(&book);
+        assert_eq!(
+            (bid, ask),
+            (129.0, 131.0),
+            "a packet that carries no depth says nothing about the book, {:?}",
+            partial.header.code
+        );
+    }
+}
+
+#[test]
+fn a_later_valid_quote_restores_a_cleared_side() {
+    let (master, catalog) = fixture();
+    let mut book = ChainBook::build(&master, &catalog);
+
+    book.apply(&full_message(101, 130.0, 129.0, 131.0, 120_000));
+    book.apply(&depthless_full(101, 130.0));
+    assert_eq!(call_row_zero(&book).0, 0.0);
+
+    book.apply(&full_message(101, 130.0, 128.75, 130.25, 120_000));
+    let (bid, bid_quantity, ask, _) = call_row_zero(&book);
+    assert_eq!(bid, 128.75, "liquidity returning must be picked up again");
+    assert_eq!(bid_quantity, 750.0);
+    assert_eq!(ask, 130.25);
 }
 
 #[test]

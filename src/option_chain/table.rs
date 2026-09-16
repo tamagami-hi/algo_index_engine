@@ -28,6 +28,7 @@ pub(crate) struct Block {
     pub(crate) change: Vec<f64>,
     pub(crate) change_in_oi: Vec<f64>,
     pub(crate) last_trade_time: Vec<i64>,
+    pub(crate) received_at: Vec<u64>,
     pub(crate) updates: Vec<u64>,
 }
 
@@ -56,12 +57,23 @@ impl Block {
             change: vec![0.0; size],
             change_in_oi: vec![0.0; size],
             last_trade_time: vec![0; size],
+            received_at: vec![0; size],
             updates: vec![0; size],
         }
     }
 
     pub(crate) fn is_quoted(&self, row: usize) -> bool {
         self.updates.get(row).is_some_and(|count| *count > 0)
+    }
+
+    pub(crate) fn raw_quote(&self, row: usize) -> super::quality::RawQuote {
+        super::quality::RawQuote {
+            quoted: self.is_quoted(row),
+            received_at: self.received_at.get(row).copied().unwrap_or(0),
+            premium: self.ltp.get(row).copied().unwrap_or(0.0),
+            bid: self.bid.get(row).copied().unwrap_or(0.0),
+            ask: self.ask.get(row).copied().unwrap_or(0.0),
+        }
     }
 }
 
@@ -77,6 +89,7 @@ pub(crate) struct OptionTable {
     pub(crate) puts: Block,
     pub(crate) spot: SpotInstrument,
     pub(crate) spot_price: f64,
+    pub(crate) spot_received_at: u64,
     pub(crate) spot_updates: u64,
 }
 
@@ -110,7 +123,10 @@ pub(crate) fn strike_step_units(strike_units: &[i64]) -> i64 {
     if strike_units.len() < 2 {
         return 0;
     }
-    let mut gaps: Vec<i64> = strike_units.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    let mut gaps: Vec<i64> = strike_units
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect();
     gaps.sort_unstable();
     gaps[gaps.len() / 2]
 }
@@ -158,6 +174,7 @@ pub(crate) fn build_tables(
             puts: Block::zeroed(size),
             spot: spot.clone(),
             spot_price: 0.0,
+            spot_received_at: 0,
             spot_updates: 0,
         };
 
@@ -174,7 +191,10 @@ pub(crate) fn build_tables(
     tables
 }
 
-pub(crate) fn feed_key(segment: ExchangeSegment, security_id: &str) -> Option<(ExchangeSegment, i32)> {
+pub(crate) fn feed_key(
+    segment: ExchangeSegment,
+    security_id: &str,
+) -> Option<(ExchangeSegment, i32)> {
     security_id.parse::<i32>().ok().map(|id| (segment, id))
 }
 

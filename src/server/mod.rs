@@ -36,7 +36,6 @@ pub(crate) async fn run() -> Result<()> {
         }
     });
 
-
     let mut terminate =
         signal(SignalKind::terminate()).context("cannot install the SIGTERM handler")?;
 
@@ -53,7 +52,6 @@ pub(crate) async fn run() -> Result<()> {
     ran.context("engine loop stopped")?;
     Ok(())
 }
-
 
 fn begin_shutdown(engine: &EngineState, shutdown: &CancellationToken, cause: &str) {
     println!("{cause} received, shutting down");

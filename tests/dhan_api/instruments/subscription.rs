@@ -216,7 +216,13 @@ fn only_the_front_expiry_is_subscribed_per_underlying() {
     ];
     let spots = vec![
         nifty_spot(),
-        spot(ExchangeSegment::IdxI, "BSE", "SENSEX", "51", SpotKind::Index),
+        spot(
+            ExchangeSegment::IdxI,
+            "BSE",
+            "SENSEX",
+            "51",
+            SpotKind::Index,
+        ),
     ];
 
     let catalog = build_catalog(&master(options, spots), AS_OF).unwrap();
@@ -281,7 +287,13 @@ fn spot_is_never_subscribed_for_an_underlying_with_no_option_chain() {
             "51",
             SpotKind::Index,
         ),
-        spot(ExchangeSegment::NseEq, "NSE", "TCS", "11536", SpotKind::Equity),
+        spot(
+            ExchangeSegment::NseEq,
+            "NSE",
+            "TCS",
+            "11536",
+            SpotKind::Equity,
+        ),
         spot(
             ExchangeSegment::NseEq,
             "NSE",
@@ -344,7 +356,13 @@ fn excluded_index_chains_are_reported_and_take_their_spot_with_them() {
         ),
     ];
     let spots = vec![
-        spot(ExchangeSegment::IdxI, "BSE", "SENSEX", "51", SpotKind::Index),
+        spot(
+            ExchangeSegment::IdxI,
+            "BSE",
+            "SENSEX",
+            "51",
+            SpotKind::Index,
+        ),
         spot(
             ExchangeSegment::IdxI,
             "BSE",
@@ -444,9 +462,3 @@ fn a_missing_extra_spot_index_is_reported_rather_than_silently_dropped() {
     );
     assert_eq!(ids(&catalog.spot), vec!["13"]);
 }
-
-
-
-
-
-

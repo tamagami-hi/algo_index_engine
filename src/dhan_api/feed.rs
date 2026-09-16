@@ -64,14 +64,32 @@ impl Full {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Packet {
-    Index { last_price: f32 },
-    Ticker { last_price: f32, last_trade_time: i32 },
-    Quote { last_price: f32, volume: i32 },
-    OpenInterest { open_interest: i32 },
-    PrevClose { close: f32, open_interest: i32 },
+    Index {
+        last_price: f32,
+    },
+    Ticker {
+        last_price: f32,
+        last_trade_time: i32,
+    },
+    Quote {
+        last_price: f32,
+        volume: i32,
+    },
+    OpenInterest {
+        open_interest: i32,
+    },
+    PrevClose {
+        close: f32,
+        open_interest: i32,
+    },
     Full(Full),
-    Disconnect { reason: i16 },
-    Unknown { code: u8, len: usize },
+    Disconnect {
+        reason: i16,
+    },
+    Unknown {
+        code: u8,
+        len: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

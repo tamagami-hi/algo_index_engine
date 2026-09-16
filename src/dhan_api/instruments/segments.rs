@@ -39,7 +39,6 @@ impl ExchangeSegment {
             _ => None,
         }
     }
-
 }
 
 pub(crate) fn derivative_segment(exchange_id: &str, segment: &str) -> Result<ExchangeSegment> {
@@ -63,7 +62,9 @@ pub(crate) fn spot_segment(
         ("NSE", "D", "FUTIDX") => Ok(ExchangeSegment::NseFno),
         ("BSE", "D", "FUTIDX") => Ok(ExchangeSegment::BseFno),
         ("MCX", "M", "FUTIDX") => Ok(ExchangeSegment::McxComm),
-        _ => bail!("unsupported spot exchange/segment/instrument: {exchange_id}/{segment}/{instrument}"),
+        _ => bail!(
+            "unsupported spot exchange/segment/instrument: {exchange_id}/{segment}/{instrument}"
+        ),
     }
 }
 

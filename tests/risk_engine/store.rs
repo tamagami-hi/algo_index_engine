@@ -149,8 +149,11 @@ fn several_strategies_can_target_different_indices_at_once() {
     }
 
     assert_eq!(active().len(), 4);
-    let underlyings: Vec<String> =
-        list().strategies.into_iter().map(|item| item.underlying).collect();
+    let underlyings: Vec<String> = list()
+        .strategies
+        .into_iter()
+        .map(|item| item.underlying)
+        .collect();
     assert_eq!(
         underlyings,
         vec![
@@ -161,7 +164,6 @@ fn several_strategies_can_target_different_indices_at_once() {
         ]
     );
 }
-
 
 #[test]
 fn concurrent_activation_of_different_strategies_loses_nobody() {

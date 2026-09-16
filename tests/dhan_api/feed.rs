@@ -15,11 +15,23 @@ fn header(code: u8, len: u16, segment: u8, security_id: i32) -> Vec<u8> {
 
 #[test]
 fn the_documented_segment_bytes_map_to_the_right_segments() {
-    assert_eq!(ExchangeSegment::from_code(IDX_I), Some(ExchangeSegment::IdxI));
-    assert_eq!(ExchangeSegment::from_code(NSE_EQ), Some(ExchangeSegment::NseEq));
-    assert_eq!(ExchangeSegment::from_code(NSE_FNO), Some(ExchangeSegment::NseFno));
+    assert_eq!(
+        ExchangeSegment::from_code(IDX_I),
+        Some(ExchangeSegment::IdxI)
+    );
+    assert_eq!(
+        ExchangeSegment::from_code(NSE_EQ),
+        Some(ExchangeSegment::NseEq)
+    );
+    assert_eq!(
+        ExchangeSegment::from_code(NSE_FNO),
+        Some(ExchangeSegment::NseFno)
+    );
     assert_eq!(ExchangeSegment::from_code(4), Some(ExchangeSegment::BseEq));
-    assert_eq!(ExchangeSegment::from_code(5), Some(ExchangeSegment::McxComm));
+    assert_eq!(
+        ExchangeSegment::from_code(5),
+        Some(ExchangeSegment::McxComm)
+    );
     assert_eq!(ExchangeSegment::from_code(8), Some(ExchangeSegment::BseFno));
     assert_eq!(ExchangeSegment::from_code(6), None, "6 is not assigned");
     assert_eq!(ExchangeSegment::from_code(99), None);
@@ -118,9 +130,7 @@ fn a_single_frame_carrying_many_packets_is_split_by_declared_length() {
     );
     assert_eq!(
         messages[2].packet,
-        Packet::OpenInterest {
-            open_interest: 555
-        }
+        Packet::OpenInterest { open_interest: 555 }
     );
     assert_eq!(messages[3].header.security_id, 21);
     assert_eq!(messages[3].packet, Packet::Index { last_price: 11.75 });
@@ -134,7 +144,11 @@ fn a_truncated_trailing_packet_is_dropped_rather_than_read_past_the_end() {
 
     let messages = decode_frame(&frame);
 
-    assert_eq!(messages.len(), 1, "the partial second packet must be ignored");
+    assert_eq!(
+        messages.len(),
+        1,
+        "the partial second packet must be ignored"
+    );
     assert_eq!(messages[0].header.security_id, 2002);
 }
 

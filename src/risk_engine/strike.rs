@@ -139,7 +139,6 @@ where
     best.map(|(row, _)| row)
 }
 
-
 pub(crate) fn resolve(
     table: &OptionTable,
     side: Side,

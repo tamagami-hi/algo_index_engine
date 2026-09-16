@@ -26,6 +26,7 @@ fn table(step: f64, first: f64, count: usize, spot: f64) -> OptionTable {
             kind: SpotKind::Index,
         },
         spot_price: spot,
+        spot_received_at: crate::option_chain::quality::monotonic_millis(),
         spot_updates: 1,
     }
 }
@@ -33,7 +34,11 @@ fn table(step: f64, first: f64, count: usize, spot: f64) -> OptionTable {
 #[test]
 fn spot_atm_rounds_to_the_nearest_strike_on_the_chains_own_step() {
     let fifty = table(50.0, 25_000.0, 11, 25_274.0);
-    assert_eq!(spot_atm(&fifty), Some(25_250.0), "274 is nearer 250 than 300");
+    assert_eq!(
+        spot_atm(&fifty),
+        Some(25_250.0),
+        "274 is nearer 250 than 300"
+    );
 
     let mut up = fifty.clone();
     up.spot_price = 25_276.0;
@@ -285,7 +290,11 @@ fn straddle_rows_span_ten_strikes_each_side_and_clamp_at_the_edges() {
     assert_eq!(atm, 20);
 
     let rows = straddle_rows(&chain, atm);
-    assert_eq!(rows.len(), 21, "ten either side of the market ATM plus itself");
+    assert_eq!(
+        rows.len(),
+        21,
+        "ten either side of the market ATM plus itself"
+    );
     assert_eq!(rows[0].strike, chain.strikes[10]);
     assert_eq!(rows[20].strike, chain.strikes[30]);
     assert_eq!(rows[10].straddle_price, 80.0);

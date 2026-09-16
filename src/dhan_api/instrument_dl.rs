@@ -10,7 +10,10 @@ pub(crate) async fn download_instrument_master(as_of: &str) -> Result<PathBuf> {
     let instrument_directory = crate::config::data_path(INSTRUMENT_DIRECTORY);
     let instrument_path = instrument_directory.join(format!("{as_of}.csv"));
 
-    if tokio::fs::try_exists(&instrument_path).await.unwrap_or(false) {
+    if tokio::fs::try_exists(&instrument_path)
+        .await
+        .unwrap_or(false)
+    {
         println!(
             "Dhan instrument master for {as_of} already downloaded: {}",
             instrument_path.display()

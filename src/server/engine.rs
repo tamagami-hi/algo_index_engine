@@ -102,15 +102,10 @@ async fn cycle(
     .await
 }
 
-pub(crate) fn reload_reason(
-    loaded: Option<&(String, Catalog)>,
-    as_of: &str,
-) -> Option<String> {
+pub(crate) fn reload_reason(loaded: Option<&(String, Catalog)>, as_of: &str) -> Option<String> {
     match loaded {
         None => Some(format!("first load for trading day {as_of}")),
-        Some((day, _)) if day != as_of => {
-            Some(format!("trading day moved from {day} to {as_of}"))
-        }
+        Some((day, _)) if day != as_of => Some(format!("trading day moved from {day} to {as_of}")),
         Some((_, catalog)) => catalog
             .stale_expiry(as_of)
             .map(|(symbol, expiry)| format!("{symbol} expiry {expiry} is behind {as_of}")),

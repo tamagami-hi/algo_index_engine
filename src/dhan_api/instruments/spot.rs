@@ -80,7 +80,10 @@ fn resolve_one(
     None
 }
 
-pub(crate) fn resolve_index_spot(master: &InstrumentMaster, symbol: &str) -> Option<SpotInstrument> {
+pub(crate) fn resolve_index_spot(
+    master: &InstrumentMaster,
+    symbol: &str,
+) -> Option<SpotInstrument> {
     let wanted = normalize_symbol(symbol);
     master
         .spots

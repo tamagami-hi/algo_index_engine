@@ -56,7 +56,6 @@ fn a_malformed_date_is_an_error_not_a_silent_zero() {
     assert!(days_between("2026-09-16", "20260917").is_err());
 }
 
-
 #[test]
 fn shifting_a_date_agrees_with_the_span_it_was_asked_for() {
     for days in [0_i64, 1, 6, 7, 30, 365, -1, -6, -400] {

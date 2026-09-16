@@ -7,9 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use super::expiry::{
-    Expiry, ExpirySource, TOKEN_VALIDITY_SECONDS, format_ist, jwt_expiry,
-};
+use super::expiry::{Expiry, ExpirySource, TOKEN_VALIDITY_SECONDS, format_ist, jwt_expiry};
 
 const SESSION_DIRECTORY: &str = "data/sessions";
 const SESSION_FILE_NAME: &str = "dhan_access_token.json";
@@ -57,7 +55,12 @@ pub(crate) async fn save_token(record: SessionRecord<'_>) -> Result<PathBuf> {
 
     tokio::fs::create_dir_all(directory)
         .await
-        .with_context(|| format!("Failed to create session directory: {}", directory.display()))?;
+        .with_context(|| {
+            format!(
+                "Failed to create session directory: {}",
+                directory.display()
+            )
+        })?;
 
     let session = SessionFile {
         access_token: record.access_token.to_owned(),
@@ -94,7 +97,10 @@ pub(crate) async fn cached_token() -> Result<Option<CachedToken>> {
         .with_context(|| format!("Failed to parse session file: {}", path.display()))?;
     let token = session.access_token.trim().to_owned();
     if token.is_empty() {
-        anyhow::bail!("Session file holds an empty access token: {}", path.display());
+        anyhow::bail!(
+            "Session file holds an empty access token: {}",
+            path.display()
+        );
     }
 
     let expiry = match session.expires_at {

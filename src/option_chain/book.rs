@@ -11,19 +11,38 @@ use crate::dhan_api::instruments::{
 
 const WIRE_DECIMALS: f64 = 100.0;
 
+fn wire_value(value: f64) -> Option<f64> {
+    if !value.is_finite() {
+        return None;
+    }
+    Some((value * WIRE_DECIMALS).round() / WIRE_DECIMALS)
+}
+
+fn write_number<S: SerializeSeq>(sequence: &mut S, value: Option<f64>) -> Result<(), S::Error> {
+    match value {
+        None => sequence.serialize_element(&Option::<f64>::None),
+        Some(value) if value == value.trunc() && value.abs() < 9.0e15 => {
+            sequence.serialize_element(&(value as i64))
+        }
+        Some(value) => sequence.serialize_element(&value),
+    }
+}
+
 fn compact_numbers<S: Serializer>(values: &[f64], serializer: S) -> Result<S::Ok, S::Error> {
     let mut sequence = serializer.serialize_seq(Some(values.len()))?;
     for value in values {
-        if !value.is_finite() {
-            sequence.serialize_element(&Option::<f64>::None)?;
-            continue;
-        }
-        let rounded = (value * WIRE_DECIMALS).round() / WIRE_DECIMALS;
-        if rounded == rounded.trunc() && rounded.abs() < 9.0e15 {
-            sequence.serialize_element(&(rounded as i64))?;
-        } else {
-            sequence.serialize_element(&rounded)?;
-        }
+        write_number(&mut sequence, wire_value(*value))?;
+    }
+    sequence.end()
+}
+
+fn compact_prices<S: Serializer>(values: &[f64], serializer: S) -> Result<S::Ok, S::Error> {
+    let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+    for value in values {
+        write_number(
+            &mut sequence,
+            wire_value(*value).filter(|price| *price > 0.0),
+        )?;
     }
     sequence.end()
 }
@@ -59,13 +78,13 @@ pub(crate) struct Quote {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct SideColumns {
-    #[serde(serialize_with = "compact_numbers")]
+    #[serde(serialize_with = "compact_prices")]
     pub(crate) ltp: Vec<f64>,
-    #[serde(serialize_with = "compact_numbers")]
+    #[serde(serialize_with = "compact_prices")]
     pub(crate) bid: Vec<f64>,
     #[serde(serialize_with = "compact_numbers")]
     pub(crate) bid_quantity: Vec<f64>,
-    #[serde(serialize_with = "compact_numbers")]
+    #[serde(serialize_with = "compact_prices")]
     pub(crate) ask: Vec<f64>,
     #[serde(serialize_with = "compact_numbers")]
     pub(crate) ask_quantity: Vec<f64>,
@@ -277,8 +296,10 @@ impl ChainBook {
 
         if let Some(chains) = spots.get(&key) {
             if let Some(price) = price {
+                let now = crate::option_chain::quality::monotonic_millis();
                 for chain in chains {
                     tables[*chain].spot_price = price;
+                    tables[*chain].spot_received_at = now;
                     tables[*chain].spot_updates += 1;
                 }
                 *applied += 1;
@@ -291,6 +312,7 @@ impl ChainBook {
             return;
         };
 
+        let now = crate::option_chain::quality::monotonic_millis();
         for leg in matched {
             let table = &mut tables[leg.chain];
             let block = match leg.side {
@@ -301,6 +323,7 @@ impl ChainBook {
                 continue;
             }
             apply_packet(block, leg.row, &message.packet);
+            block.received_at[leg.row] = now;
             *applied += 1;
         }
     }
@@ -317,7 +340,9 @@ fn columns_of(block: &super::table::Block) -> SideColumns {
         change_in_oi: block.change_in_oi.clone(),
         volume: block.volume.clone(),
         change: block.change.clone(),
-        quoted: (0..block.ltp.len()).map(|row| block.is_quoted(row)).collect(),
+        quoted: (0..block.ltp.len())
+            .map(|row| block.is_quoted(row))
+            .collect(),
     }
 }
 
@@ -362,13 +387,25 @@ fn apply_packet(block: &mut super::table::Block, row: usize, packet: &Packet) {
             block.day_low[row] = f64::from(full.day_low);
             block.day_close[row] = f64::from(full.day_close);
             block.last_trade_time[row] = i64::from(full.last_trade_time);
-            if let Some((price, quantity)) = full.best_bid() {
-                block.bid[row] = f64::from(price);
-                block.bid_quantity[row] = f64::from(quantity);
+            match full.best_bid() {
+                Some((price, quantity)) => {
+                    block.bid[row] = f64::from(price);
+                    block.bid_quantity[row] = f64::from(quantity);
+                }
+                None => {
+                    block.bid[row] = 0.0;
+                    block.bid_quantity[row] = 0.0;
+                }
             }
-            if let Some((price, quantity)) = full.best_ask() {
-                block.ask[row] = f64::from(price);
-                block.ask_quantity[row] = f64::from(quantity);
+            match full.best_ask() {
+                Some((price, quantity)) => {
+                    block.ask[row] = f64::from(price);
+                    block.ask_quantity[row] = f64::from(quantity);
+                }
+                None => {
+                    block.ask[row] = 0.0;
+                    block.ask_quantity[row] = 0.0;
+                }
             }
             refresh_changes(block, row);
             block.updates[row] += 1;

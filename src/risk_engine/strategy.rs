@@ -29,7 +29,12 @@ impl TimeOfDay {
 
 impl std::fmt::Display for TimeOfDay {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{:02}:{:02}", self.minutes / 60, self.minutes % 60)
+        write!(
+            formatter,
+            "{:02}:{:02}",
+            self.minutes / 60,
+            self.minutes % 60
+        )
     }
 }
 
@@ -183,12 +188,14 @@ impl EntryCondition {
     pub(crate) fn is_met(&self, reference: impl Fn(&str) -> Option<f64>) -> bool {
         match self {
             Self::Always => true,
-            Self::ReferenceAbove { reference: key, value } => {
-                reference(key).is_some_and(|observed| observed > *value)
-            }
-            Self::ReferenceAtMost { reference: key, value } => {
-                reference(key).is_some_and(|observed| observed <= *value)
-            }
+            Self::ReferenceAbove {
+                reference: key,
+                value,
+            } => reference(key).is_some_and(|observed| observed > *value),
+            Self::ReferenceAtMost {
+                reference: key,
+                value,
+            } => reference(key).is_some_and(|observed| observed <= *value),
         }
     }
 }
@@ -272,14 +279,27 @@ impl Strategy {
 pub(crate) enum StrategyError {
     BlankId,
     BlankName,
-    IdNotSlug { id: String },
+    IdNotSlug {
+        id: String,
+    },
     BlankUnderlying,
     NoLegs,
     NoDteSelected,
-    DteOutOfRange { day: i64, max: i64 },
-    ExitNotAfterEntry { entry: String, exit: String },
-    ZeroLots { leg: usize },
-    NonPositiveThreshold { leg: Option<usize>, field: &'static str },
+    DteOutOfRange {
+        day: i64,
+        max: i64,
+    },
+    ExitNotAfterEntry {
+        entry: String,
+        exit: String,
+    },
+    ZeroLots {
+        leg: usize,
+    },
+    NonPositiveThreshold {
+        leg: Option<usize>,
+        field: &'static str,
+    },
     BeyondPremiumCeiling {
         leg: Option<usize>,
         field: &'static str,
@@ -344,7 +364,10 @@ impl Strategy {
                 [
                     ("target", leg.target),
                     ("trailing.arm_at", leg.trailing.map(|trail| trail.arm_at)),
-                    ("trailing.give_back", leg.trailing.map(|trail| trail.give_back)),
+                    (
+                        "trailing.give_back",
+                        leg.trailing.map(|trail| trail.give_back),
+                    ),
                 ]
             } else {
                 [("stop_loss", leg.stop_loss), ("", None), ("", None)]
@@ -361,7 +384,12 @@ impl Strategy {
             }
         }
 
-        check_thresholds(None, self.overall.stop_loss, self.overall.target, self.overall.trailing)?;
+        check_thresholds(
+            None,
+            self.overall.stop_loss,
+            self.overall.target,
+            self.overall.trailing,
+        )?;
 
         if self.legs.iter().all(|leg| leg.action == Action::Sell) {
             for (field, rule) in [
@@ -417,8 +445,7 @@ fn check_thresholds(
     }
 
     if let Some(trail) = trailing.filter(|trail| {
-        trail.arm_at.method == trail.give_back.method
-            && trail.give_back.value > trail.arm_at.value
+        trail.arm_at.method == trail.give_back.method && trail.give_back.value > trail.arm_at.value
     }) {
         return Err(StrategyError::TrailGivesBackMoreThanItCaptures {
             leg,

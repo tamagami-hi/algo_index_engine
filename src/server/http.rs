@@ -69,7 +69,9 @@ pub(crate) async fn serve(
         .route("/api/strategies/template", get(api_strategy_template))
         .route(
             "/api/strategies/{id}",
-            get(api_strategy).put(api_save_strategy).delete(api_delete_strategy),
+            get(api_strategy)
+                .put(api_save_strategy)
+                .delete(api_delete_strategy),
         )
         .route("/api/strategies/{id}/resolve", get(api_resolve_strategy))
         .route("/api/strategies/{id}/activate", post(api_activate))
@@ -149,7 +151,8 @@ async fn api_chains(State(http): State<Http>) -> Response {
 }
 
 async fn api_symbols(State(http): State<Http>) -> Response {
-    let body = serde_json::to_string(&http.engine.chain_symbols()).unwrap_or_else(|_| "[]".to_owned());
+    let body =
+        serde_json::to_string(&http.engine.chain_symbols()).unwrap_or_else(|_| "[]".to_owned());
     json(StatusCode::OK, body)
 }
 
@@ -204,7 +207,9 @@ async fn api_stream(
                 (crate::server::state::now_millis() - snapshot.started_at_ms) / 1_000;
 
             let payload = StreamFrame {
-                chain: chain.as_deref().and_then(|symbol| engine.chain_columns(symbol)),
+                chain: chain
+                    .as_deref()
+                    .and_then(|symbol| engine.chain_columns(symbol)),
                 state: snapshot,
             };
             let encoded = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_owned());
@@ -217,7 +222,6 @@ async fn api_stream(
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-
 
 fn encoded(status: StatusCode, value: &impl Serialize) -> Response {
     match serde_json::to_string(value) {

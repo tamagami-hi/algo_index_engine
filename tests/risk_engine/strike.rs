@@ -23,6 +23,7 @@ fn chain(step: f64, first: f64, count: usize, spot: f64) -> OptionTable {
             kind: SpotKind::Index,
         },
         spot_price: spot,
+        spot_received_at: crate::option_chain::quality::monotonic_millis(),
         spot_updates: 1,
     };
     for row in 0..size {
@@ -85,10 +86,7 @@ fn otm3_mirrors_itm3() {
         steps: 3,
     };
 
-    assert_eq!(
-        resolve(&table, Side::Call, &otm3).unwrap().strike,
-        25_650.0
-    );
+    assert_eq!(resolve(&table, Side::Call, &otm3).unwrap().strike, 25_650.0);
     assert_eq!(resolve(&table, Side::Put, &otm3).unwrap().strike, 25_350.0);
 }
 
@@ -163,9 +161,7 @@ fn closest_premium_ignores_unquoted_strikes() {
 #[test]
 fn premium_at_least_takes_the_smallest_premium_that_still_clears_the_threshold() {
     let mut table = chain(50.0, 25_000.0, 9, 25_200.0);
-    table.calls.ltp = vec![
-        400.0, 330.0, 260.0, 200.0, 150.0, 110.0, 75.0, 48.0, 30.0,
-    ];
+    table.calls.ltp = vec![400.0, 330.0, 260.0, 200.0, 150.0, 110.0, 75.0, 48.0, 30.0];
     table.puts.ltp = vec![30.0, 48.0, 75.0, 110.0, 150.0, 200.0, 260.0, 330.0, 400.0];
 
     let resolved = resolve(
@@ -183,9 +179,7 @@ fn premium_at_least_takes_the_smallest_premium_that_still_clears_the_threshold()
 #[test]
 fn premium_at_most_takes_the_largest_premium_within_the_cap() {
     let mut table = chain(50.0, 25_000.0, 9, 25_200.0);
-    table.calls.ltp = vec![
-        400.0, 330.0, 260.0, 200.0, 150.0, 110.0, 75.0, 48.0, 30.0,
-    ];
+    table.calls.ltp = vec![400.0, 330.0, 260.0, 200.0, 150.0, 110.0, 75.0, 48.0, 30.0];
     table.puts.ltp = vec![30.0, 48.0, 75.0, 110.0, 150.0, 200.0, 260.0, 330.0, 400.0];
 
     let resolved = resolve(
@@ -230,8 +224,14 @@ fn straddle_width_steps_away_from_the_money_in_the_right_direction() {
     let call = resolve(&table, Side::Call, &away).expect("call side");
     let put = resolve(&table, Side::Put, &away).expect("put side");
 
-    assert!(call.strike > 26_000.0, "a call moves up away from the money");
-    assert!(put.strike < 26_000.0, "a put moves down away from the money");
+    assert!(
+        call.strike > 26_000.0,
+        "a call moves up away from the money"
+    );
+    assert!(
+        put.strike < 26_000.0,
+        "a put moves down away from the money"
+    );
     assert_eq!(call.strike, 26_100.0, "120 of straddle rounds to two steps");
     assert_eq!(put.strike, 25_900.0);
 }

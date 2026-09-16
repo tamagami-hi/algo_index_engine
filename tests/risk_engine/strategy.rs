@@ -187,7 +187,6 @@ fn a_missing_reference_never_fires_an_entry() {
     );
 }
 
-
 fn percent(value: f64) -> Threshold {
     Threshold {
         method: RiskMethod::Percent,

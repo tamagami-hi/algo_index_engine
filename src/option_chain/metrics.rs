@@ -64,7 +64,7 @@ fn safe_sum(values: &[f64]) -> f64 {
 }
 
 fn is_valid_price(value: f64) -> bool {
-    value > 0.0 && value.is_finite()
+    super::quality::usable_price(value).is_some()
 }
 
 pub(crate) fn spot_atm_units(spot_units: i64, step_units: i64) -> i64 {
@@ -117,7 +117,12 @@ pub(crate) fn max_pain_index(table: &OptionTable, market_atm_row: usize) -> Opti
     if table.strikes.is_empty() {
         return None;
     }
-    let window = clamp_window(market_atm_row, MAX_PAIN_WINDOW, MAX_PAIN_WINDOW, table.len());
+    let window = clamp_window(
+        market_atm_row,
+        MAX_PAIN_WINDOW,
+        MAX_PAIN_WINDOW,
+        table.len(),
+    );
 
     let mut best = market_atm_row;
     let mut least_pain = f64::MAX;

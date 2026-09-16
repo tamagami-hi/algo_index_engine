@@ -4,7 +4,13 @@ use crate::dhan_api::instruments::master::{
 };
 use crate::dhan_api::instruments::{ExchangeSegment, build_catalog, to_strike_units};
 
-fn option(symbol: &str, expiry: &str, strike: f64, option_type: OptionType, id: &str) -> OptionContract {
+fn option(
+    symbol: &str,
+    expiry: &str,
+    strike: f64,
+    option_type: OptionType,
+    id: &str,
+) -> OptionContract {
     OptionContract {
         segment: ExchangeSegment::NseFno,
         security_id: id.to_owned(),
@@ -50,7 +56,10 @@ fn nothing_loaded_means_load() {
 
 #[test]
 fn a_catalog_for_today_with_a_live_expiry_is_kept() {
-    let loaded = ("2026-09-16".to_owned(), catalog_for("2026-09-22", "2026-09-16"));
+    let loaded = (
+        "2026-09-16".to_owned(),
+        catalog_for("2026-09-22", "2026-09-16"),
+    );
     assert_eq!(
         reload_reason(Some(&loaded), "2026-09-16"),
         None,
@@ -60,7 +69,10 @@ fn a_catalog_for_today_with_a_live_expiry_is_kept() {
 
 #[test]
 fn the_day_moving_forces_a_reload() {
-    let loaded = ("2026-09-16".to_owned(), catalog_for("2026-09-22", "2026-09-16"));
+    let loaded = (
+        "2026-09-16".to_owned(),
+        catalog_for("2026-09-22", "2026-09-16"),
+    );
     let reason = reload_reason(Some(&loaded), "2026-09-17").expect("must reload");
     assert!(reason.contains("2026-09-16"), "{reason}");
     assert!(reason.contains("2026-09-17"), "{reason}");
@@ -68,7 +80,10 @@ fn the_day_moving_forces_a_reload() {
 
 #[test]
 fn an_expiry_that_has_passed_forces_a_reload_so_the_next_one_is_picked_up() {
-    let loaded = ("2026-09-22".to_owned(), catalog_for("2026-09-22", "2026-09-22"));
+    let loaded = (
+        "2026-09-22".to_owned(),
+        catalog_for("2026-09-22", "2026-09-22"),
+    );
     assert_eq!(
         reload_reason(Some(&loaded), "2026-09-22"),
         None,
@@ -84,7 +99,10 @@ fn an_expiry_that_has_passed_forces_a_reload_so_the_next_one_is_picked_up() {
 
 #[test]
 fn a_stale_expiry_is_caught_even_when_the_day_label_still_matches() {
-    let loaded = ("2026-09-23".to_owned(), catalog_for("2026-09-22", "2026-09-22"));
+    let loaded = (
+        "2026-09-23".to_owned(),
+        catalog_for("2026-09-22", "2026-09-22"),
+    );
     let reason = reload_reason(Some(&loaded), "2026-09-23").expect("must reload");
     assert!(
         reason.contains("NIFTY") && reason.contains("2026-09-22"),
@@ -101,4 +119,3 @@ fn stale_expiry_names_the_chain_at_fault() {
         Some(("NIFTY", "2026-09-22"))
     );
 }
-

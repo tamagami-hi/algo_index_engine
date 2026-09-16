@@ -1,5 +1,12 @@
 use crate::risk_engine::strategy::{DteSelection, MAX_DTE};
 
+fn live_feed() -> crate::risk_engine::FeedHealth {
+    crate::risk_engine::FeedHealth {
+        connected: true,
+        last_frame_at: Some(crate::option_chain::quality::monotonic_millis()),
+    }
+}
+
 fn selection(days: &[i64]) -> DteSelection {
     DteSelection::of(days.iter().copied())
 }
@@ -111,7 +118,6 @@ fn a_selection_round_trips_through_json_as_a_plain_day_list() {
     );
 }
 
-
 fn chain_expiring_in(days: i64) -> crate::option_chain::table::OptionTable {
     use crate::dhan_api::instruments::master::SpotKind;
     use crate::dhan_api::instruments::{
@@ -128,18 +134,26 @@ fn chain_expiring_in(days: i64) -> crate::option_chain::table::OptionTable {
         "the synthetic expiry {expiry} must really be {days} days from {today}"
     );
 
-    let strikes: Vec<f64> = (0..11).map(|index| 25_000.0 + 50.0 * index as f64).collect();
+    let strikes: Vec<f64> = (0..11)
+        .map(|index| 25_000.0 + 50.0 * index as f64)
+        .collect();
     let strike_units: Vec<i64> = strikes.iter().copied().map(to_strike_units).collect();
     let size = strikes.len();
     let mut calls = Block::zeroed(size);
     let mut puts = Block::zeroed(size);
+    let now = crate::option_chain::quality::monotonic_millis();
     for row in 0..size {
         calls.security_id[row] = Some(format!("1{row}"));
         puts.security_id[row] = Some(format!("2{row}"));
-        calls.ltp[row] = 100.0;
-        puts.ltp[row] = 100.0;
-        calls.updates[row] = 1;
-        puts.updates[row] = 1;
+        for block in [&mut calls, &mut puts] {
+            block.ltp[row] = 100.0;
+            block.bid[row] = 99.5;
+            block.bid_quantity[row] = 750.0;
+            block.ask[row] = 100.5;
+            block.ask_quantity[row] = 900.0;
+            block.received_at[row] = now;
+            block.updates[row] = 1;
+        }
     }
 
     OptionTable {
@@ -157,6 +171,7 @@ fn chain_expiring_in(days: i64) -> crate::option_chain::table::OptionTable {
             kind: SpotKind::Index,
         },
         spot_price: 25_250.0,
+        spot_received_at: crate::option_chain::quality::monotonic_millis(),
         spot_updates: 1,
     }
 }
@@ -175,7 +190,7 @@ fn resolving_arms_only_when_the_live_expiry_is_a_selected_dte() {
 
         for actual in 0..=MAX_DTE {
             let table = chain_expiring_in(actual);
-            let resolution = resolve_strategy(&strategy, &table, |_| None);
+            let resolution = resolve_strategy(&strategy, &table, live_feed(), |_| None);
             assert_eq!(
                 resolution.days_to_expiry,
                 Some(actual),
@@ -208,7 +223,7 @@ fn resolving_with_all_dte_selected_arms_across_the_whole_range() {
 
     for actual in 0..=MAX_DTE {
         let table = chain_expiring_in(actual);
-        let resolution = resolve_strategy(&strategy, &table, |_| None);
+        let resolution = resolve_strategy(&strategy, &table, live_feed(), |_| None);
         assert!(
             resolution.expiry_gate_met,
             "all DTE selected, chain is {actual}DTE"
@@ -228,7 +243,7 @@ fn resolving_reports_an_expiry_already_past_as_shut() {
     strategy.dte = DteSelection::all();
 
     let table = chain_expiring_in(-1);
-    let resolution = resolve_strategy(&strategy, &table, |_| None);
+    let resolution = resolve_strategy(&strategy, &table, live_feed(), |_| None);
     assert_eq!(resolution.days_to_expiry, Some(-1));
     assert!(
         !resolution.expiry_gate_met,
@@ -236,7 +251,6 @@ fn resolving_reports_an_expiry_already_past_as_shut() {
     );
     assert!(!resolution.would_enter_now);
 }
-
 
 #[test]
 fn the_entry_window_is_one_minute_wide_and_shuts_after_it() {
@@ -261,10 +275,7 @@ fn the_entry_window_is_one_minute_wide_and_shuts_after_it() {
         "09:15 is before the window"
     );
     assert!(strategy.entry_open(at(9, 16)), "09:16 is the window");
-    assert!(
-        !strategy.entry_open(at(9, 17)),
-        "09:17 is already too late"
-    );
+    assert!(!strategy.entry_open(at(9, 17)), "09:17 is already too late");
 
     for (hours, minutes) in [(9, 18), (9, 30), (11, 0), (13, 45), (14, 58)] {
         assert!(
@@ -324,7 +335,7 @@ fn resolving_refuses_an_entry_outside_the_minute_it_was_set_for() {
     let mut entered = None;
     for _ in 0..5 {
         let before = ist_minutes_now();
-        let resolution = resolve_strategy(&build(before), &table, |_| None);
+        let resolution = resolve_strategy(&build(before), &table, live_feed(), |_| None);
         if ist_minutes_now() == before {
             entered = Some(resolution);
             break;
@@ -338,7 +349,7 @@ fn resolving_refuses_an_entry_outside_the_minute_it_was_set_for() {
     assert!(resolution.would_enter_now, "{resolution:?}");
 
     let missed = build(now.saturating_sub(30).max(1));
-    let resolution = resolve_strategy(&missed, &table, |_| None);
+    let resolution = resolve_strategy(&missed, &table, live_feed(), |_| None);
     assert!(
         !resolution.entry_window_open,
         "a window that opened 30 minutes ago is shut"
@@ -353,7 +364,210 @@ fn resolving_refuses_an_entry_outside_the_minute_it_was_set_for() {
     );
 
     let too_early = build(now + 30);
-    let resolution = resolve_strategy(&too_early, &table, |_| None);
+    let resolution = resolve_strategy(&too_early, &table, live_feed(), |_| None);
     assert!(!resolution.entry_window_open, "the window has not opened");
     assert!(!resolution.would_enter_now);
+}
+
+fn armed_strategy() -> crate::risk_engine::strategy::Strategy {
+    use crate::dhan_api::instruments::ist_minutes_now;
+    use crate::risk_engine::strategy::{Strategy, TimeOfDay};
+
+    let now = ist_minutes_now();
+    let mut strategy = Strategy::template("NIFTY");
+    strategy.id = "probe".to_owned();
+    strategy.name = "probe".to_owned();
+    strategy.entry_time = TimeOfDay::from_minutes(now);
+    strategy.exit_time = TimeOfDay::from_minutes(now + 120);
+    strategy
+}
+
+#[test]
+fn a_resolvable_contract_is_not_by_itself_an_entry_ready_strategy() {
+    use crate::risk_engine::{Blocker, FeedHealth, resolve_strategy};
+
+    let table = chain_expiring_in(0);
+    let strategy = armed_strategy();
+
+    let disconnected = resolve_strategy(
+        &strategy,
+        &table,
+        FeedHealth {
+            connected: false,
+            last_frame_at: Some(crate::option_chain::quality::monotonic_millis()),
+        },
+        |_| None,
+    );
+    assert!(
+        disconnected.blockers.contains(&Blocker::FeedDisconnected),
+        "{:?}",
+        disconnected.blockers
+    );
+    assert!(
+        !disconnected.would_enter_now,
+        "a resolvable strike over a dead feed is not tradeable"
+    );
+    assert!(
+        !disconnected.blocked_because.is_empty(),
+        "the operator must be told why"
+    );
+}
+
+#[test]
+fn a_silent_feed_blocks_entry_even_while_the_socket_is_up() {
+    use crate::risk_engine::{FeedHealth, resolve_strategy};
+
+    let table = chain_expiring_in(0);
+    let strategy = armed_strategy();
+
+    let silent = resolve_strategy(
+        &strategy,
+        &table,
+        FeedHealth {
+            connected: true,
+            last_frame_at: Some(0),
+        },
+        |_| None,
+    );
+    let stalled = silent
+        .blockers
+        .iter()
+        .any(|blocker| matches!(blocker, crate::risk_engine::Blocker::FeedSilent { .. }));
+    assert!(
+        stalled || silent.would_enter_now,
+        "either the feed reads silent or the process only just started: {:?}",
+        silent.blockers
+    );
+}
+
+#[test]
+fn an_unquoted_strike_blocks_entry() {
+    use crate::option_chain::quality::QuoteProblem;
+    use crate::risk_engine::{Blocker, resolve_strategy};
+
+    let mut table = chain_expiring_in(0);
+    for row in 0..table.len() {
+        table.calls.updates[row] = 0;
+        table.puts.updates[row] = 0;
+    }
+
+    let resolution = resolve_strategy(&armed_strategy(), &table, live_feed(), |_| None);
+    assert!(
+        resolution.blockers.iter().any(|blocker| matches!(
+            blocker,
+            Blocker::OptionQuote {
+                detail: QuoteProblem::NeverQuoted,
+                ..
+            }
+        )),
+        "{:?}",
+        resolution.blockers
+    );
+    assert!(!resolution.would_enter_now);
+}
+
+#[test]
+fn a_short_leg_without_a_bid_cannot_enter() {
+    use crate::option_chain::quality::{QuoteProblem, QuoteSide};
+    use crate::risk_engine::{Blocker, resolve_strategy};
+
+    let mut table = chain_expiring_in(0);
+    for row in 0..table.len() {
+        table.calls.bid[row] = 0.0;
+        table.puts.bid[row] = 0.0;
+    }
+
+    let resolution = resolve_strategy(&armed_strategy(), &table, live_feed(), |_| None);
+    assert!(
+        resolution.blockers.iter().any(|blocker| matches!(
+            blocker,
+            Blocker::OptionQuote {
+                detail: QuoteProblem::NoUsableSide {
+                    side: QuoteSide::Bid
+                },
+                ..
+            }
+        )),
+        "a leg that must sell needs a bid: {:?}",
+        resolution.blockers
+    );
+    assert!(!resolution.would_enter_now);
+
+    let mut buying = armed_strategy();
+    for leg in &mut buying.legs {
+        leg.action = crate::risk_engine::strategy::Action::Buy;
+    }
+    let as_buyer = resolve_strategy(&buying, &table, live_feed(), |_| None);
+    assert!(
+        as_buyer.would_enter_now,
+        "the same book is fine for a buyer, who needs the ask: {:?}",
+        as_buyer.blocked_because
+    );
+}
+
+#[test]
+fn a_stale_underlying_blocks_entry() {
+    use crate::risk_engine::{Blocker, resolve_strategy};
+
+    let mut table = chain_expiring_in(0);
+    table.spot_received_at = 0;
+    table.spot_updates = 1;
+
+    let resolution = resolve_strategy(&armed_strategy(), &table, live_feed(), |_| None);
+    let stale = resolution
+        .blockers
+        .iter()
+        .any(|blocker| matches!(blocker, Blocker::UnderlyingStale { .. }));
+    assert!(
+        stale || resolution.would_enter_now,
+        "either the spot reads stale or the process only just started: {:?}",
+        resolution.blockers
+    );
+
+    let mut never = chain_expiring_in(0);
+    never.spot_updates = 0;
+    let unquoted = resolve_strategy(&armed_strategy(), &never, live_feed(), |_| None);
+    assert!(
+        unquoted
+            .blockers
+            .iter()
+            .any(|blocker| matches!(blocker, Blocker::UnderlyingNeverQuoted { .. })),
+        "{:?}",
+        unquoted.blockers
+    );
+    assert!(!unquoted.would_enter_now);
+}
+
+#[test]
+fn a_chain_without_a_lot_size_blocks_entry() {
+    use crate::risk_engine::{Blocker, resolve_strategy};
+
+    let mut table = chain_expiring_in(0);
+    table.lot_size = 0;
+
+    let resolution = resolve_strategy(&armed_strategy(), &table, live_feed(), |_| None);
+    assert!(resolution.blockers.contains(&Blocker::ChainHasNoLotSize));
+    assert!(
+        !resolution.would_enter_now,
+        "every order would be for zero quantity"
+    );
+}
+
+#[test]
+fn a_fully_healthy_book_inside_the_window_has_no_blockers() {
+    use crate::risk_engine::resolve_strategy;
+
+    let table = chain_expiring_in(0);
+    let resolution = resolve_strategy(&armed_strategy(), &table, live_feed(), |_| None);
+    assert_eq!(
+        resolution.blockers,
+        Vec::new(),
+        "nothing should be blocking: {:?}",
+        resolution.blocked_because
+    );
+    assert!(resolution.would_enter_now);
+    assert!(
+        resolution.legs.iter().all(|leg| leg.quote_age_ms.is_some()),
+        "a ready leg reports how old its quote is"
+    );
 }

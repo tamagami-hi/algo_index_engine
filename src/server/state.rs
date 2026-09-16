@@ -118,6 +118,8 @@ pub(crate) struct FeedView {
     pub(crate) frames: u64,
     pub(crate) bytes: u64,
     pub(crate) last_frame_at_ms: Option<i64>,
+    #[serde(skip)]
+    pub(crate) last_frame_at: Option<u64>,
     pub(crate) subscribed: usize,
     pub(crate) packets: u64,
     pub(crate) index_packets: u64,
@@ -241,7 +243,6 @@ impl EngineState {
         self.update(|snapshot| snapshot.feed.chains = chains);
     }
 
-
     pub(crate) fn chain_metrics(&self) -> Vec<ChainMetrics> {
         self.book
             .read()
@@ -256,7 +257,6 @@ impl EngineState {
             .ok()
             .and_then(|guard| guard.as_ref().and_then(|book| book.view(symbol)))
     }
-
 
     pub(crate) fn feed_connected(&self) {
         self.update(|snapshot| {
@@ -291,13 +291,23 @@ impl EngineState {
         &self,
         strategy: &crate::risk_engine::strategy::Strategy,
     ) -> Option<crate::risk_engine::Resolution> {
+        let feed = {
+            let snapshot = self.sender.borrow();
+            crate::risk_engine::FeedHealth {
+                connected: snapshot.feed.connected,
+                last_frame_at: snapshot.feed.last_frame_at,
+            }
+        };
         let guard = self.book.read().ok()?;
         let book = guard.as_ref()?;
         let table = book.table(&strategy.underlying)?;
         let (_, _, references) = book.stats();
-        Some(crate::risk_engine::resolve_strategy(strategy, table, |key| {
-            references.get(key).copied()
-        }))
+        Some(crate::risk_engine::resolve_strategy(
+            strategy,
+            table,
+            feed,
+            |key| references.get(key).copied(),
+        ))
     }
 
     pub(crate) fn chain_symbols(&self) -> Vec<String> {
@@ -333,6 +343,7 @@ impl EngineState {
             feed.frames += 1;
             feed.bytes += bytes as u64;
             feed.last_frame_at_ms = Some(now_millis());
+            feed.last_frame_at = Some(crate::option_chain::quality::monotonic_millis());
             if messages.is_empty() && bytes > 0 {
                 feed.undecodable_frames += 1;
             }
