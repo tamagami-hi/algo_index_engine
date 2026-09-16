@@ -229,7 +229,9 @@ export interface Resolution {
   minutes_until_exit: number;
   days_to_expiry: number | null;
   expiry_gate_met: boolean;
+  lot_size: number;
   legs: ResolvedLeg[];
   problems: LegProblem[];
+  sizing?: { problem: string; underlying: string };
   would_enter_now: boolean;
 }

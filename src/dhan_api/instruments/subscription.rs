@@ -94,10 +94,6 @@ impl Catalog {
         self.spot.len() + self.index_options.len()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.spot.is_empty() && self.index_options.is_empty()
-    }
-
     pub(crate) fn pools(&self) -> [&Pool; 2] {
         [&self.spot, &self.index_options]
     }

@@ -235,6 +235,14 @@ pub(crate) fn parse_instrument_master(text: &str) -> Result<InstrumentMaster> {
         }
     }
 
+    if !master.report.missing_columns.is_empty() {
+        bail!(
+            "instrument master is missing column(s) {}; the layout has changed and parsed \
+             values cannot be trusted",
+            master.report.missing_columns.join(", ")
+        );
+    }
+
     if master.options.is_empty() {
         bail!(
             "instrument master yielded no option contracts from {} rows; the layout has probably changed",

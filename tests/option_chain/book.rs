@@ -1,9 +1,9 @@
 use super::*;
 use crate::dhan_api::feed::{DepthLevel, Full, Header, Message};
-use crate::dhan_api::instruments::{
-    ChainKind, ExchangeSegment, InstrumentMaster, OptionContract, OptionType, SpotKind, SpotRow,
-    to_strike_units,
+use crate::dhan_api::instruments::master::{
+    ChainKind, InstrumentMaster, OptionContract, OptionType, SpotKind, SpotRow,
 };
+use crate::dhan_api::instruments::{ExchangeSegment, to_strike_units};
 
 fn option(strike: f64, option_type: OptionType, security_id: &str) -> OptionContract {
     OptionContract {

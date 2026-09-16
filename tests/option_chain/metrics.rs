@@ -1,5 +1,6 @@
 use super::*;
-use crate::dhan_api::instruments::{ExchangeSegment, SpotKind, to_strike_units};
+use crate::dhan_api::instruments::master::SpotKind;
+use crate::dhan_api::instruments::{ExchangeSegment, to_strike_units};
 use crate::option_chain::table::{Block, OptionTable, strike_step_units};
 
 fn table(step: f64, first: f64, count: usize, spot: f64) -> OptionTable {

@@ -1,8 +1,8 @@
 use super::reload_reason;
-use crate::dhan_api::instruments::{
-    ChainKind, ExchangeSegment, InstrumentMaster, OptionContract, OptionType, SpotKind, SpotRow,
-    build_catalog, to_strike_units,
+use crate::dhan_api::instruments::master::{
+    ChainKind, InstrumentMaster, OptionContract, OptionType, SpotKind, SpotRow,
 };
+use crate::dhan_api::instruments::{ExchangeSegment, build_catalog, to_strike_units};
 
 fn option(symbol: &str, expiry: &str, strike: f64, option_type: OptionType, id: &str) -> OptionContract {
     OptionContract {

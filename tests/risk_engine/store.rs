@@ -160,3 +160,67 @@ fn several_strategies_can_target_different_indices_at_once() {
         ]
     );
 }
+
+
+#[test]
+fn concurrent_activation_of_different_strategies_loses_nobody() {
+    let _sandbox = Sandbox::new();
+    let ids: Vec<String> = (0..12).map(|n| format!("s{n}")).collect();
+    for id in &ids {
+        save(&strategy(id, "NIFTY")).expect("save");
+    }
+
+    // Activating is read, insert, write. Run them together: without a lock one
+    // thread's set overwrites another's and activations silently vanish.
+    std::thread::scope(|scope| {
+        for id in &ids {
+            scope.spawn(move || activate(id).expect("activate"));
+        }
+    });
+
+    let active = active();
+    assert_eq!(
+        active.len(),
+        ids.len(),
+        "every activation must survive: got {active:?}"
+    );
+}
+
+#[test]
+fn concurrent_writes_leave_one_coherent_file_and_no_temp_droppings() {
+    let _sandbox = Sandbox::new();
+    save(&strategy("target", "NIFTY")).expect("save");
+
+    std::thread::scope(|scope| {
+        for turn in 0..16 {
+            scope.spawn(move || {
+                if turn % 2 == 0 {
+                    let _ = activate("target");
+                } else {
+                    let _ = deactivate("target");
+                }
+            });
+        }
+    });
+
+    // Whatever the interleaving decided, the file must be readable and agree with
+    // what the reader reports - a shared temp path used to publish another
+    // writer's bytes and leave the set and the file disagreeing.
+    let from_reader = active();
+    let path = crate::config::data_path("data/strategies/active.json");
+    let on_disk: std::collections::BTreeSet<String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|body| serde_json::from_str(&body).ok())
+        .unwrap_or_default();
+    assert_eq!(
+        from_reader, on_disk,
+        "the active set and its file must not disagree"
+    );
+
+    let strays = std::fs::read_dir(crate::config::data_path("data/strategies"))
+        .expect("dir")
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+        .count();
+    assert_eq!(strays, 0, "no temp files may be left behind");
+}

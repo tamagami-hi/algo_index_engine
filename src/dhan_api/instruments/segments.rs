@@ -26,19 +26,6 @@ impl ExchangeSegment {
         }
     }
 
-    pub(crate) const fn code(self) -> u8 {
-        match self {
-            Self::IdxI => 0,
-            Self::NseEq => 1,
-            Self::NseFno => 2,
-            Self::NseCurrency => 3,
-            Self::BseEq => 4,
-            Self::McxComm => 5,
-            Self::BseCurrency => 7,
-            Self::BseFno => 8,
-        }
-    }
-
     pub(crate) const fn from_code(code: u8) -> Option<Self> {
         match code {
             0 => Some(Self::IdxI),
@@ -53,9 +40,6 @@ impl ExchangeSegment {
         }
     }
 
-    pub(crate) const fn is_derivative(self) -> bool {
-        matches!(self, Self::NseFno | Self::BseFno | Self::McxComm)
-    }
 }
 
 pub(crate) fn derivative_segment(exchange_id: &str, segment: &str) -> Result<ExchangeSegment> {

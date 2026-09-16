@@ -20,3 +20,22 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 tokio-util = "0.7.19"
 mimalloc = "0.1.52"
 tower-http = { version = "0.7.1", default-features = false, features = ["fs"] }
+
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = false
+incremental = false
+# Money and strike arithmetic must never wrap silently. A wrapped strike or
+# quantity is a wrong order; a panic is caught by the task supervisor and retried.
+overflow-checks = true
+# Left as unwind on purpose: server::run awaits both task handles and reports a
+# panic as "task panicked". abort would kill the process and lose that.
+panic = "unwind"
+
+[profile.release.package."*"]
+opt-level = 3
+codegen-units = 1

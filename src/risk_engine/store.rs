@@ -1,9 +1,22 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, bail};
 
 use super::strategy::Strategy;
+
+/// Serialises read-modify-write of the active set. Activating is read, insert,
+/// write; two of those interleaved lose one edit. Held only across file work,
+/// never across an await.
+static STORE: Mutex<()> = Mutex::new(());
+
+fn guard() -> MutexGuard<'static, ()> {
+    STORE.lock().unwrap_or_else(|error| {
+        STORE.clear_poison();
+        error.into_inner()
+    })
+}
 
 const STRATEGY_DIRECTORY: &str = "data/strategies";
 const ACTIVE_FILE: &str = "data/strategies/active.json";
@@ -27,7 +40,19 @@ fn write_atomically(path: &Path, body: &str) -> Result<()> {
     std::fs::create_dir_all(parent)
         .with_context(|| format!("cannot create {}", parent.display()))?;
 
-    let temporary = path.with_extension("json.tmp");
+    // A temp name unique per write. A shared one lets one writer's rename publish
+    // another writer's bytes, and leaves the loser renaming a file that is gone.
+    let unique = format!(
+        "{}.{}.{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("strategy"),
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos())
+    );
+    let temporary = parent.join(unique);
     std::fs::write(&temporary, body)
         .with_context(|| format!("cannot write {}", temporary.display()))?;
     std::fs::rename(&temporary, path)
@@ -36,6 +61,7 @@ fn write_atomically(path: &Path, body: &str) -> Result<()> {
 }
 
 pub(crate) fn save(strategy: &Strategy) -> Result<()> {
+    let _lock = guard();
     if let Err(problem) = strategy.validate() {
         bail!("strategy is not valid: {}", serde_json::to_string(&problem)?);
     }
@@ -75,39 +101,47 @@ pub(crate) fn list() -> Vec<Strategy> {
 }
 
 pub(crate) fn remove(id: &str) -> Result<()> {
+    let _lock = guard();
     let path = definition_path(id);
     std::fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
-    let mut active = active();
-    if active.remove(id) {
-        set_active(&active)?;
+    let mut ids = read_active();
+    if ids.remove(id) {
+        write_active(&ids)?;
     }
     Ok(())
 }
 
-pub(crate) fn active() -> BTreeSet<String> {
+fn read_active() -> BTreeSet<String> {
     std::fs::read_to_string(active_path())
         .ok()
         .and_then(|body| serde_json::from_str::<BTreeSet<String>>(&body).ok())
         .unwrap_or_default()
 }
 
-pub(crate) fn set_active(ids: &BTreeSet<String>) -> Result<()> {
+fn write_active(ids: &BTreeSet<String>) -> Result<()> {
     let body = serde_json::to_string_pretty(ids).context("cannot encode the active set")?;
     write_atomically(&active_path(), &body)
 }
 
+pub(crate) fn active() -> BTreeSet<String> {
+    let _lock = guard();
+    read_active()
+}
+
 pub(crate) fn activate(id: &str) -> Result<BTreeSet<String>> {
+    let _lock = guard();
     load(id).with_context(|| format!("cannot activate unknown strategy {id}"))?;
-    let mut ids = active();
+    let mut ids = read_active();
     ids.insert(id.to_owned());
-    set_active(&ids)?;
+    write_active(&ids)?;
     Ok(ids)
 }
 
 pub(crate) fn deactivate(id: &str) -> Result<BTreeSet<String>> {
-    let mut ids = active();
+    let _lock = guard();
+    let mut ids = read_active();
     ids.remove(id);
-    set_active(&ids)?;
+    write_active(&ids)?;
     Ok(ids)
 }
 

@@ -1,5 +1,6 @@
 use super::*;
-use crate::dhan_api::instruments::{ExchangeSegment, SpotKind, UnderlyingKey};
+use crate::dhan_api::instruments::master::SpotKind;
+use crate::dhan_api::instruments::{ExchangeSegment, UnderlyingKey};
 use crate::option_chain::table::strike_step_units;
 
 fn chain(step: f64, first: f64, count: usize, spot: f64) -> OptionTable {

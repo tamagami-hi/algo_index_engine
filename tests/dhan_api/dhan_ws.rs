@@ -1,5 +1,6 @@
 use super::*;
-use crate::dhan_api::instruments::{ExchangeSegment, MAX_PER_MESSAGE};
+use crate::dhan_api::instruments::ExchangeSegment;
+use crate::dhan_api::instruments::subscription::MAX_PER_MESSAGE;
 
 fn subscription(security_id: usize) -> Subscription {
     Subscription {

@@ -1,7 +1,9 @@
 use super::*;
+use crate::dhan_api::instruments::master::{
+    ChainKind, InstrumentMaster, OptionContract, OptionType, SpotKind,
+};
 use crate::dhan_api::instruments::{
-    ChainKind, ExchangeSegment, InstrumentMaster, OptionContract, OptionType, SpotInstrument,
-    SpotKind, UnderlyingKey, to_strike_units,
+    ExchangeSegment, SpotInstrument, UnderlyingKey, to_strike_units,
 };
 
 fn contract(

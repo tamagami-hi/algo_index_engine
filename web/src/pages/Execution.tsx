@@ -51,8 +51,8 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
           {resolution.would_enter_now ? "would enter now" : "would not enter"}
         </span>
         <span className="note">
-          spot {num(resolution.spot_price)} · atm {num(resolution.spot_atm, 0)} ·{" "}
-          {resolution.minutes_until_exit} min to exit
+          spot {num(resolution.spot_price)} · atm {num(resolution.spot_atm, 0)} · lot{" "}
+          {resolution.lot_size} · {resolution.minutes_until_exit} min to exit
         </span>
       </div>
 
@@ -94,6 +94,13 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
             ))}
           </tbody>
         </table>
+      ) : null}
+
+      {resolution.sizing ? (
+        <div className="err">
+          {resolution.sizing.underlying}: {resolution.sizing.problem} — cannot size an
+          order, entry is blocked
+        </div>
       ) : null}
 
       {resolution.problems.length > 0 ? (

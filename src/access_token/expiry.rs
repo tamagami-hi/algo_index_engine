@@ -163,18 +163,13 @@ fn decode_base64url(input: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum StatedExpiry {
     Number(f64),
     Text(String),
+    #[default]
     Null,
-}
-
-impl Default for StatedExpiry {
-    fn default() -> Self {
-        Self::Null
-    }
 }
 
 pub(crate) fn now_unix_seconds() -> Result<i64> {

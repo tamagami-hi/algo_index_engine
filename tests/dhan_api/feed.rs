@@ -1,16 +1,32 @@
 use super::*;
 use crate::dhan_api::instruments::ExchangeSegment;
 
-fn header(code: u8, len: u16, segment: ExchangeSegment, security_id: i32) -> Vec<u8> {
+const IDX_I: u8 = 0;
+const NSE_EQ: u8 = 1;
+const NSE_FNO: u8 = 2;
+
+fn header(code: u8, len: u16, segment: u8, security_id: i32) -> Vec<u8> {
     let mut bytes = vec![code];
     bytes.extend_from_slice(&len.to_le_bytes());
-    bytes.push(segment.code());
+    bytes.push(segment);
     bytes.extend_from_slice(&security_id.to_le_bytes());
     bytes
 }
 
+#[test]
+fn the_documented_segment_bytes_map_to_the_right_segments() {
+    assert_eq!(ExchangeSegment::from_code(IDX_I), Some(ExchangeSegment::IdxI));
+    assert_eq!(ExchangeSegment::from_code(NSE_EQ), Some(ExchangeSegment::NseEq));
+    assert_eq!(ExchangeSegment::from_code(NSE_FNO), Some(ExchangeSegment::NseFno));
+    assert_eq!(ExchangeSegment::from_code(4), Some(ExchangeSegment::BseEq));
+    assert_eq!(ExchangeSegment::from_code(5), Some(ExchangeSegment::McxComm));
+    assert_eq!(ExchangeSegment::from_code(8), Some(ExchangeSegment::BseFno));
+    assert_eq!(ExchangeSegment::from_code(6), None, "6 is not assigned");
+    assert_eq!(ExchangeSegment::from_code(99), None);
+}
+
 fn full_packet(security_id: i32, ltp: f32, bid: f32, ask: f32) -> Vec<u8> {
-    let mut bytes = header(CODE_FULL, 162, ExchangeSegment::NseFno, security_id);
+    let mut bytes = header(CODE_FULL, 162, NSE_FNO, security_id);
     bytes.extend_from_slice(&ltp.to_le_bytes());
     bytes.extend_from_slice(&7i16.to_le_bytes());
     bytes.extend_from_slice(&1_700_000_000i32.to_le_bytes());
@@ -74,16 +90,16 @@ fn a_single_frame_carrying_many_packets_is_split_by_declared_length() {
     let mut frame = Vec::new();
     frame.extend_from_slice(&full_packet(1001, 10.0, 9.5, 10.5));
 
-    let mut ticker = header(CODE_TICKER, 16, ExchangeSegment::IdxI, 13);
+    let mut ticker = header(CODE_TICKER, 16, IDX_I, 13);
     ticker.extend_from_slice(&25_642.8f32.to_le_bytes());
     ticker.extend_from_slice(&1_700_000_001i32.to_le_bytes());
     frame.extend_from_slice(&ticker);
 
-    let mut oi = header(CODE_OI, 12, ExchangeSegment::NseFno, 1001);
+    let mut oi = header(CODE_OI, 12, NSE_FNO, 1001);
     oi.extend_from_slice(&555i32.to_le_bytes());
     frame.extend_from_slice(&oi);
 
-    let mut index = header(CODE_INDEX, 16, ExchangeSegment::IdxI, 21);
+    let mut index = header(CODE_INDEX, 16, IDX_I, 21);
     index.extend_from_slice(&11.75f32.to_le_bytes());
     index.extend_from_slice(&0i32.to_le_bytes());
     frame.extend_from_slice(&index);
@@ -113,7 +129,7 @@ fn a_single_frame_carrying_many_packets_is_split_by_declared_length() {
 #[test]
 fn a_truncated_trailing_packet_is_dropped_rather_than_read_past_the_end() {
     let mut frame = full_packet(2002, 50.0, 49.0, 51.0);
-    frame.extend_from_slice(&header(CODE_FULL, 162, ExchangeSegment::NseFno, 3003));
+    frame.extend_from_slice(&header(CODE_FULL, 162, NSE_FNO, 3003));
     frame.extend_from_slice(&1.0f32.to_le_bytes());
 
     let messages = decode_frame(&frame);
@@ -124,10 +140,10 @@ fn a_truncated_trailing_packet_is_dropped_rather_than_read_past_the_end() {
 
 #[test]
 fn an_unknown_code_advances_by_its_declared_length_without_losing_the_next_packet() {
-    let mut frame = header(99, 12, ExchangeSegment::NseEq, 4004);
+    let mut frame = header(99, 12, NSE_EQ, 4004);
     frame.extend_from_slice(&0i32.to_le_bytes());
 
-    let mut oi = header(CODE_OI, 12, ExchangeSegment::NseFno, 5005);
+    let mut oi = header(CODE_OI, 12, NSE_FNO, 5005);
     oi.extend_from_slice(&42i32.to_le_bytes());
     frame.extend_from_slice(&oi);
 
@@ -161,7 +177,7 @@ fn a_frame_shorter_than_a_header_yields_nothing() {
 
 #[test]
 fn disconnect_carries_its_reason_code() {
-    let mut frame = header(CODE_DISCONNECT, 10, ExchangeSegment::IdxI, 0);
+    let mut frame = header(CODE_DISCONNECT, 10, IDX_I, 0);
     frame.extend_from_slice(&805i16.to_le_bytes());
 
     let messages = decode_frame(&frame);
