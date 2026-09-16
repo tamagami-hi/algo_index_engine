@@ -15,10 +15,10 @@ const RETRY_MAX: Duration = Duration::from_secs(300);
 
 pub(crate) async fn run(engine: EngineState, shutdown: CancellationToken) -> Result<()> {
     let mut backoff = RETRY_MIN;
-    let mut loaded_for: Option<String> = None;
+    let mut loaded: Option<(String, Catalog)> = None;
 
     while !shutdown.is_cancelled() {
-        match cycle(&engine, &mut loaded_for, &shutdown).await {
+        match cycle(&engine, &mut loaded, &shutdown).await {
             Ok(()) => {
                 if shutdown.is_cancelled() {
                     break;
@@ -52,7 +52,7 @@ pub(crate) async fn run(engine: EngineState, shutdown: CancellationToken) -> Res
 
 async fn cycle(
     engine: &EngineState,
-    loaded_for: &mut Option<String>,
+    loaded: &mut Option<(String, Catalog)>,
     shutdown: &CancellationToken,
 ) -> Result<()> {
     engine.set_phase(Phase::Authenticating, "");
@@ -66,13 +66,13 @@ async fn cycle(
     };
 
     let as_of = ist_today()?;
-    if loaded_for.as_deref() != Some(as_of.as_str()) {
+    if loaded.as_ref().map(|(day, _)| day.as_str()) != Some(as_of.as_str()) {
         engine.set_phase(Phase::LoadingInstruments, format!("trading day {as_of}"));
         match load_universe(&as_of).await {
             Ok(catalog) => {
                 report_catalog(&catalog);
                 engine.set_catalog(&as_of, &catalog);
-                *loaded_for = Some(as_of.clone());
+                *loaded = Some((as_of.clone(), catalog));
             }
             Err(error) => {
                 let detail = format!("{error:#}");
@@ -82,10 +82,15 @@ async fn cycle(
         }
     }
 
+    let Some((_, catalog)) = loaded.as_ref() else {
+        anyhow::bail!("no catalog is loaded for {as_of}");
+    };
+
     engine.set_phase(Phase::Ready, "");
     ws_dhan_connection(
         &credentials.client_id,
         &credentials.access_token,
+        catalog,
         engine,
         shutdown,
     )

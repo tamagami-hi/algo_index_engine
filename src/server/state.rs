@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tokio::sync::watch;
 
+use crate::dhan_api::feed::Packet;
 use crate::dhan_api::instruments::Catalog;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -113,7 +114,19 @@ pub(crate) struct FeedView {
     pub(crate) frames: u64,
     pub(crate) bytes: u64,
     pub(crate) last_frame_at: Option<i64>,
+    pub(crate) subscribed: usize,
+    pub(crate) packets: u64,
+    pub(crate) index_packets: u64,
+    pub(crate) ticker_packets: u64,
+    pub(crate) quote_packets: u64,
+    pub(crate) full_packets: u64,
+    pub(crate) oi_packets: u64,
+    pub(crate) prev_close_packets: u64,
+    pub(crate) unknown_packets: u64,
+    pub(crate) undecodable_frames: u64,
+    pub(crate) two_sided_packets: u64,
 }
+
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Snapshot {
@@ -194,6 +207,7 @@ impl EngineState {
         });
     }
 
+
     pub(crate) fn feed_connected(&self) {
         self.update(|snapshot| {
             snapshot.phase = Phase::FeedConnected;
@@ -217,6 +231,40 @@ impl EngineState {
             snapshot.feed.frames += 1;
             snapshot.feed.bytes += bytes as u64;
             snapshot.feed.last_frame_at = Some(now_unix());
+        });
+    }
+
+    pub(crate) fn feed_subscribed(&self, instruments: usize) {
+        self.update(|snapshot| {
+            snapshot.feed.subscribed = instruments;
+        });
+    }
+
+    pub(crate) fn feed_undecodable(&self, _bytes: usize) {
+        self.update(|snapshot| {
+            snapshot.feed.undecodable_frames += 1;
+        });
+    }
+
+    pub(crate) fn feed_packet(&self, message: &crate::dhan_api::feed::Message) {
+        self.update(|snapshot| {
+            snapshot.feed.packets += 1;
+            let feed = &mut snapshot.feed;
+            match message.packet {
+                Packet::Index { .. } => feed.index_packets += 1,
+                Packet::Ticker { .. } => feed.ticker_packets += 1,
+                Packet::Quote { .. } => feed.quote_packets += 1,
+                Packet::Full(full) => {
+                    feed.full_packets += 1;
+                    if full.best_bid().is_some() && full.best_ask().is_some() {
+                        feed.two_sided_packets += 1;
+                    }
+                }
+                Packet::OpenInterest { .. } => feed.oi_packets += 1,
+                Packet::PrevClose { .. } => feed.prev_close_packets += 1,
+                Packet::Unknown { .. } => feed.unknown_packets += 1,
+                Packet::Disconnect { .. } => {}
+            }
         });
     }
 }
