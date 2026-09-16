@@ -1,0 +1,530 @@
+:root {
+  --bg: #000;
+  --bg-raised: #070707;
+  --fg: #d0d0d0;
+  --dim: #6a6a6a;
+  --rule: #1c1c1c;
+  --rule-bright: #2a2a2a;
+  --key: #8a8a8a;
+  --live: #35d07f;
+  --idle: #4a4a4a;
+  --warn: #d0a215;
+  --bad: #e0483d;
+  --call: #4a9ee0;
+  --put: #d97fb0;
+  --atm: #14261c;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--rule-bright);
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--key);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.on {
+  border-color: var(--live);
+  color: var(--live);
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--rule-bright);
+  padding: 0.25rem 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--key);
+}
+
+/* ── shell ───────────────────────────────────────────────────────────── */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.brand {
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  color: #fff;
+}
+
+nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+nav a {
+  color: var(--dim);
+  text-decoration: none;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid transparent;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+nav a:hover {
+  color: var(--fg);
+}
+
+nav a[aria-current="page"] {
+  color: #fff;
+  border-color: var(--rule-bright);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+
+.dot.live {
+  background: var(--live);
+}
+
+.dot.warn {
+  background: var(--warn);
+}
+
+.dot.bad {
+  background: var(--bad);
+}
+
+main {
+  padding: 1rem;
+  flex: 1;
+}
+
+/* ── panels ──────────────────────────────────────────────────────────── */
+
+.panel {
+  border: 1px solid var(--rule);
+  margin-bottom: 1rem;
+}
+
+.panel > h2 {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--key);
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel > .body {
+  padding: 0.75rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.1rem 1.5rem;
+}
+
+.stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px dotted var(--rule);
+  padding: 0.18rem 0;
+}
+
+.stat .k {
+  color: var(--key);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.stat .v {
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.big {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  padding: 0.25rem 0;
+}
+
+.big .cell .k {
+  color: var(--key);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.big .cell .v {
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.up {
+  color: var(--live);
+}
+
+.down {
+  color: var(--bad);
+}
+
+.muted {
+  color: var(--dim);
+}
+
+.warnfg {
+  color: var(--warn);
+}
+
+/* ── tables ──────────────────────────────────────────────────────────── */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+th,
+td {
+  padding: 0.15rem 0.45rem;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid #0d0d0d;
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  color: var(--key);
+  font-weight: 500;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--rule-bright);
+  z-index: 2;
+}
+
+.chainwrap {
+  max-height: calc(100vh - 16rem);
+  overflow: auto;
+}
+
+td.strike {
+  text-align: center;
+  color: #fff;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+}
+
+tr.atmrow td {
+  background: var(--atm);
+}
+
+tr.atmrow td.strike {
+  color: var(--live);
+}
+
+td.itm {
+  background: #060606;
+}
+
+th.callside {
+  color: var(--call);
+}
+
+th.putside {
+  color: var(--put);
+}
+
+td.stale {
+  color: var(--idle);
+}
+
+/* ── strategy ────────────────────────────────────────────────────────── */
+
+details summary {
+  cursor: pointer;
+  color: var(--key);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.35rem 0;
+  list-style: none;
+}
+
+details summary::-webkit-details-marker {
+  display: none;
+}
+
+details summary::before {
+  content: "▸ ";
+  color: var(--dim);
+}
+
+details[open] summary::before {
+  content: "▾ ";
+}
+
+.rowline {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.3rem 0;
+}
+
+.tag {
+  border: 1px solid var(--rule-bright);
+  padding: 0.05rem 0.4rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dim);
+}
+
+.tag.live {
+  border-color: var(--live);
+  color: var(--live);
+}
+
+.tag.sell {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.tag.buy {
+  border-color: var(--live);
+  color: var(--live);
+}
+
+.strategy {
+  border: 1px solid var(--rule);
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.strategy.armed {
+  border-color: #24402f;
+}
+
+.strategy h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #fff;
+}
+
+.err {
+  color: var(--bad);
+  font-size: 0.75rem;
+  padding: 0.4rem 0;
+}
+
+.note {
+  color: var(--dim);
+  font-size: 0.72rem;
+}
+
+fieldset {
+  border: 1px solid var(--rule);
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.6rem;
+}
+
+legend {
+  color: var(--key);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0 0.35rem;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem 0.9rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.field label {
+  color: var(--key);
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+/* ── flowchart ───────────────────────────────────────────────────────── */
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 0.5rem 0;
+}
+
+.node {
+  border: 1px solid var(--rule-bright);
+  padding: 0.5rem 0.85rem;
+  min-width: 13rem;
+  text-align: center;
+  background: var(--bg-raised);
+}
+
+.node .title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--key);
+}
+
+.node .line {
+  font-size: 0.76rem;
+  color: var(--fg);
+}
+
+.node.start {
+  border-color: #3a3520;
+}
+
+.node.gate {
+  border-color: #1f3348;
+}
+
+.node.order {
+  border-color: #1d3a2a;
+}
+
+.node.exit {
+  border-color: #45201f;
+}
+
+.stem {
+  width: 1px;
+  height: 1rem;
+  background: var(--rule-bright);
+}
+
+.branches {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.branch .label {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+  padding-bottom: 0.2rem;
+}
+
+.branch.t .label {
+  color: var(--live);
+}
+
+.branch.f .label {
+  color: var(--warn);
+}

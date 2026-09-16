@@ -31,3 +31,7 @@ Thumbs.db
 /release_manager/build/
 /release_manager/state/*
 !/release_manager/state/.gitkeep
+
+# frontend
+web/node_modules/
+web/dist/

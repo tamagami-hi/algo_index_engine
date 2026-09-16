@@ -19,3 +19,4 @@ tempfile = "3.27"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 tokio-util = "0.7.19"
 mimalloc = "0.1.52"
+tower-http = { version = "0.7.1", default-features = false, features = ["fs"] }

@@ -17,6 +17,8 @@ use tokio_util::sync::CancellationToken;
 
 use serde::{Deserialize, Serialize};
 
+use tower_http::services::{ServeDir, ServeFile};
+
 use crate::option_chain::book::ChainColumns;
 use crate::risk_engine;
 use crate::server::state::{EngineState, Snapshot};
@@ -34,6 +36,7 @@ struct StreamFrame {
 }
 
 const DEFAULT_ADDR: &str = "0.0.0.0:8081";
+const WEB_ROOT: &str = "web/dist";
 const ADDR_VARIABLE: &str = "BLACKBOX_HTTP_ADDR";
 
 #[derive(Clone)]
@@ -76,6 +79,19 @@ pub(crate) async fn serve(
             engine,
             shutdown: shutdown.clone(),
         });
+
+    let web_root = crate::config::data_path(WEB_ROOT);
+    let app = if web_root.is_dir() {
+        println!("serving the frontend from {}", web_root.display());
+        let index = web_root.join("index.html");
+        app.fallback_service(ServeDir::new(&web_root).fallback(ServeFile::new(index)))
+    } else {
+        println!(
+            "no frontend build at {}; API only (run: cd web && npm run build)",
+            web_root.display()
+        );
+        app
+    };
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await

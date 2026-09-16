@@ -12,3 +12,6 @@ README.md
 Dockerfile
 .dockerignore
 compose.yaml
+
+web/node_modules
+web/dist
