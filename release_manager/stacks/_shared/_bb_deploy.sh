@@ -119,6 +119,7 @@ bb_deploy_main() {
 
     bb_write_version "$incoming" "$current" active
     bb_update_registry "$incoming"
+    bb_self_archive "$incoming"
 
     step "12/12 retention"
     # Last, deliberately: a failure above must never destroy a rollback target.

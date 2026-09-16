@@ -254,6 +254,76 @@ RSYNC_OPTS=(-az --checksum --human-readable --partial
 bb_ssh_opts
 printf -v RSYNC_SSH '%q ' ssh "${BB_SSH_OPTS[@]}"
 
+# Before a single byte of the incoming release lands, preserve the configuration
+# the CURRENT release is running under. The upload below overwrites the live
+# compose file in place, so anything archived after this point would pair the
+# outgoing image with the incoming config and produce a rollback bundle that
+# describes no release that ever existed.
+#
+# Sent as a heredoc rather than a call into _bb_lib.sh because the VPS still
+# holds the PREVIOUS version of those scripts at this moment; this must not
+# depend on what is already deployed there.
+#
+# The env file is never copied. It carries broker credentials and the backup tree
+# is not a place for them, so only its digest is recorded - enough to tell an
+# operator that config drifted, without spreading the secret.
+step "preserving the outgoing release configuration"
+ROLLBACK_IMAGES="$(paths_get "$PATHS_FILE" .backup.rollback_images)"
+SNAPSHOT="$(bb_ssh "bash -s -- '$REMOTE_DIR' '$ROLLBACK_IMAGES' '$VERSION_NAME' '$COMPOSE_NAME'" <<'REMOTE' || true
+set -uo pipefail
+remote_dir="$1"; rollback_images="$2"; version_name="$3"; compose_name="$4"
+
+version_file="$remote_dir/$version_name"
+compose_file="$remote_dir/$compose_name"
+
+if [[ ! -f "$version_file" ]]; then
+    printf 'snapshot=first-deploy\n'
+    exit 0
+fi
+
+current="$(jq -r '.version // empty' "$version_file" 2>/dev/null || true)"
+if [[ -z "$current" ]]; then
+    printf 'snapshot=no-current-version\n'
+    exit 0
+fi
+
+if [[ ! -f "$compose_file" ]]; then
+    printf 'snapshot=no-live-compose version=%s\n' "$current"
+    exit 0
+fi
+
+dest="$rollback_images/$current"
+mkdir -p "$dest" || { printf 'snapshot=cannot-create-dest version=%s\n' "$current"; exit 0; }
+
+if [[ -f "$dest/$compose_name" ]]; then
+    if cmp -s "$compose_file" "$dest/$compose_name"; then
+        printf 'snapshot=already-archived version=%s\n' "$current"
+    else
+        printf 'snapshot=archived-differs version=%s\n' "$current"
+    fi
+    exit 0
+fi
+
+cp "$compose_file" "$dest/$compose_name" \
+    || { printf 'snapshot=copy-failed version=%s\n' "$current"; exit 0; }
+printf 'snapshot=archived version=%s sha=%s\n' \
+    "$current" "$(sha256sum "$dest/$compose_name" | cut -d' ' -f1)"
+REMOTE
+)"
+printf '%s\n' "$SNAPSHOT" | sed 's/^/   /'
+case "$SNAPSHOT" in
+    *snapshot=archived*|*snapshot=already-archived*|*snapshot=first-deploy*)
+        ok "outgoing configuration preserved" ;;
+    *snapshot=archived-differs*)
+        err "the archived compose for the running release differs from the live one"
+        err "refusing to deploy: rolling back would restore a configuration that never ran"
+        exit 1 ;;
+    *)
+        err "could not preserve the outgoing release configuration"
+        err "refusing to deploy: a rollback bundle would pair an old image with new config"
+        exit 1 ;;
+esac
+
 step "uploading release metadata"
 # The guide is listed in checksums.sha256 when export staged it, so it must be
 # uploaded here or the remote verification fails on a file that never arrived.

@@ -252,13 +252,70 @@ bb_verify_checksums() {
     ok "checksums verified on arrival"
 }
 
+# bb_snapshot_outgoing_config <dest> <version>
+#
+# The live compose file is the INCOMING one by the time this script runs: the
+# operator machine rsyncs it into place before invoking us. So it must never be
+# archived here, or the rollback bundle becomes an old image under a new config.
+# deploy.sh snapshots the outgoing compose over SSH before that upload; this
+# only checks the snapshot arrived, and fails closed if it did not.
+bb_snapshot_outgoing_config() {
+    local dest="$1" version="$2"
+    if [[ -f "$dest/${P[compose_name]}" ]]; then
+        ok "outgoing compose for $version already archived"
+        return 0
+    fi
+    die "no archived compose for the running release $version at $dest/${P[compose_name]} — deploy.sh must snapshot it before uploading the incoming one; refusing to build a mismatched rollback bundle"
+}
+
+# bb_release_manifest <dest> <version> <status>
+#
+# Binds one release together: version, the compose that started it, the digest
+# of the env file that configured it, and the image tags. The env file itself is
+# never copied - it holds broker credentials and the backup tree is not the
+# place for them - so only its digest is recorded, enough to detect drift.
+bb_release_manifest() {
+    local dest="$1" version="$2" status="$3" tmp compose_sha env_sha images
+    compose_sha=''
+    env_sha=''
+    [[ -f "$dest/${P[compose_name]}" ]] \
+        && compose_sha="$(sha256sum "$dest/${P[compose_name]}" | cut -d' ' -f1)"
+    [[ -f "${P[env_file]}" ]] \
+        && env_sha="$(sha256sum "${P[env_file]}" | cut -d' ' -f1)"
+    images="$(bb_images | while IFS=$'\t' read -r key archive; do
+        printf '%s\t%s\talgo-index-%s:%s\n' "$key" "$archive" "$key" "$version"
+    done)"
+
+    tmp="$(mktemp "$dest/release.json.XXXXXX")" || return 0
+    jq -n \
+        --arg stack "${P[stack]}" \
+        --arg environment "${P[environment]}" \
+        --arg version "$version" \
+        --arg status "$status" \
+        --arg compose_name "${P[compose_name]}" \
+        --arg compose_sha256 "$compose_sha" \
+        --arg env_sha256 "$env_sha" \
+        --arg archived_at "$(date -Is)" \
+        --arg images "$images" \
+        '{stack: $stack, environment: $environment, version: $version,
+          status: $status, compose_name: $compose_name,
+          compose_sha256: $compose_sha256, env_sha256: $env_sha256,
+          archived_at: $archived_at,
+          images: ($images | split("\n") | map(select(length > 0) | split("\t")
+                   | {key: .[0], archive: .[1], tag: .[2]}))}' > "$tmp" \
+        || { rm -f "$tmp"; return 0; }
+    mv "$tmp" "$dest/release.json"
+}
+
 # bb_archive_current_images <dest> <version>
 #
-# Saves the running images and the compose file that started them, so a rollback
-# restores a matched pair rather than an old image under a new compose.
+# Saves the running images beside the compose file that started them, which
+# deploy.sh snapshotted before the incoming one landed, so a rollback restores a
+# matched pair rather than an old image under a new compose.
 bb_archive_current_images() {
     local dest="$1" version="$2" key archive tag
     bb_assert_writable "$dest"
+    bb_snapshot_outgoing_config "$dest" "$version"
     while IFS=$'\t' read -r key archive; do
         tag="algo-index-${key}:${version}"
         if ! "$(docker_bin)" image inspect "$tag" >/dev/null 2>&1; then
@@ -273,10 +330,28 @@ bb_archive_current_images() {
             || die "failed to archive $tag"
         info "archived $archive"
     done < <(bb_images)
-    [[ -f "${P[compose_file]}" ]] && cp "${P[compose_file]}" "$dest/${P[compose_name]}"
+    bb_release_manifest "$dest" "$version" archived
     ( cd "$dest" && find . -maxdepth 1 -type f ! -name checksums.sha256 -print0 \
         | sort -z | xargs -0 -r sha256sum > checksums.sha256 ) || true
     ok "outgoing release archived to $dest"
+}
+
+# bb_self_archive <version>
+#
+# Records the release that has just gone live into its own rollback slot: the
+# compose now in place really is the one running it, so the pair is coherent by
+# construction and the next deploy has nothing to reconstruct.
+bb_self_archive() {
+    local version="$1"
+    [[ -n "$version" ]] || return 0
+    local dest="${P[rollback_images]}/$version"
+    mkdir -p "$dest" 2>/dev/null || { warn "cannot create $dest"; return 0; }
+    cp "${P[compose_file]}" "$dest/${P[compose_name]}" 2>/dev/null \
+        || { warn "cannot archive the live compose for $version"; return 0; }
+    bb_release_manifest "$dest" "$version" live
+    ( cd "$dest" && find . -maxdepth 1 -type f ! -name checksums.sha256 -print0 \
+        | sort -z | xargs -0 -r sha256sum > checksums.sha256 ) || true
+    ok "release $version archived with the compose that started it"
 }
 
 bb_load_images() {
@@ -310,11 +385,54 @@ bb_rollback_verify() {
     ok "rollback archive verified"
 }
 
+# bb_rollback_describe <dir> <version>
+#
+# States which coherent release is about to be restored, and warns when the live
+# env file no longer matches the one that release ran under. The env file is not
+# archived, so a rollback cannot undo a credential or setting change - the
+# operator has to know that before the stack comes back up.
+bb_rollback_describe() {
+    local dir="$1" version="$2"
+    local manifest="$dir/release.json"
+    if [[ ! -f "$manifest" ]]; then
+        warn "archive for $version predates release manifests — cannot confirm the image and config belong together"
+        return 0
+    fi
+
+    local recorded_version compose_sha env_sha archived_at live_compose_sha live_env_sha
+    recorded_version="$(jq -r '.version // empty' "$manifest" 2>/dev/null || true)"
+    compose_sha="$(jq -r '.compose_sha256 // empty' "$manifest" 2>/dev/null || true)"
+    env_sha="$(jq -r '.env_sha256 // empty' "$manifest" 2>/dev/null || true)"
+    archived_at="$(jq -r '.archived_at // empty' "$manifest" 2>/dev/null || true)"
+
+    if [[ -n "$recorded_version" && "$recorded_version" != "$version" ]]; then
+        die "archive directory $version holds a manifest for $recorded_version — refusing to restore a mismatched bundle"
+    fi
+
+    info "restoring release $version archived at ${archived_at:-<unknown>}"
+
+    if [[ -n "$compose_sha" && -f "$dir/${P[compose_name]}" ]]; then
+        live_compose_sha="$(sha256sum "$dir/${P[compose_name]}" | cut -d' ' -f1)"
+        [[ "$live_compose_sha" == "$compose_sha" ]] \
+            || die "the archived compose no longer matches its manifest digest — archive is damaged"
+        ok "compose matches the manifest recorded for $version"
+    fi
+
+    if [[ -n "$env_sha" && -f "${P[env_file]}" ]]; then
+        live_env_sha="$(sha256sum "${P[env_file]}" | cut -d' ' -f1)"
+        if [[ "$live_env_sha" != "$env_sha" ]]; then
+            warn "the env file has changed since $version was deployed"
+            warn "rollback restores the image and compose but NOT credentials or settings — review ${P[env_file]}"
+        else
+            ok "env file unchanged since $version was deployed"
+        fi
+    fi
+}
+
 # ── health ──────────────────────────────────────────────────────────────────
-# The engine currently exposes no HTTP surface, so "healthy" cannot mean a 200.
-# Contract-driven: mode=container asserts the service is still running after a
-# settle window and optionally that a log line appeared; mode=http probes a URL
-# once one exists. The gap is declared in paths.json rather than hidden here.
+# Contract-driven: mode=http probes the engine's /health endpoint, mode=container
+# asserts the service is still running after a settle window and optionally that
+# a log line appeared. Which one applies is declared in paths.json, not here.
 bb_health_gate() {
     local settle="${P[health_settle]:-20}"
     case "${P[health_mode]}" in

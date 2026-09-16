@@ -62,6 +62,7 @@ bb_rollback_main() {
 
     step "1/6 verify the rollback archive"
     bb_rollback_verify "$rb"
+    bb_rollback_describe "$rb" "$TARGET"
 
     step "2/6 confirm"
     if [[ "$ASSUME_YES" != true ]]; then
@@ -92,7 +93,7 @@ bb_rollback_main() {
         cp "$rb/${P[compose_name]}" "${P[compose_file]}"
         ok "compose file restored from the archive"
     else
-        warn "archive has no compose file — keeping the current one"
+        die "archive has no compose file — refusing to run $TARGET's image under whatever config happens to be live"
     fi
 
     step "5/6 start the restored release"
