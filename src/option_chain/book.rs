@@ -204,6 +204,11 @@ impl ChainBook {
         })
     }
 
+    pub(crate) fn table(&self, symbol: &str) -> Option<&OptionTable> {
+        self.tables
+            .iter()
+            .find(|table| table.underlying.symbol.eq_ignore_ascii_case(symbol))
+    }
 
     pub(crate) fn symbols(&self) -> Vec<String> {
         self.tables

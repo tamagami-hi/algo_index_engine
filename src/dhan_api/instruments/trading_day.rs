@@ -14,6 +14,15 @@ pub(crate) fn ist_today() -> Result<String> {
     Ok(format_iso_date(unix_seconds + IST_OFFSET_SECONDS))
 }
 
+pub(crate) fn ist_minutes_now() -> u32 {
+    let unix_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64);
+    let shifted = unix_seconds + IST_OFFSET_SECONDS;
+    let within_day = shifted.rem_euclid(SECONDS_PER_DAY);
+    (within_day / 60) as u32
+}
+
 fn format_iso_date(shifted_seconds: i64) -> String {
     let days = shifted_seconds.div_euclid(SECONDS_PER_DAY);
     let (year, month, day) = civil_from_days(days);

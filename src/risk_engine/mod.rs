@@ -1,0 +1,116 @@
+pub(crate) mod store;
+pub(crate) mod strategy;
+pub(crate) mod strike;
+
+use serde::Serialize;
+
+use crate::dhan_api::instruments::ist_minutes_now;
+use crate::option_chain::table::OptionTable;
+use strategy::Strategy;
+use strike::{ResolvedStrike, StrikeError, resolve};
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ResolvedLeg {
+    pub(crate) leg: usize,
+    #[serde(flatten)]
+    pub(crate) strike: ResolvedStrike,
+    pub(crate) action: strategy::Action,
+    pub(crate) lots: u32,
+    pub(crate) quantity: u32,
+    pub(crate) stop_price: Option<f64>,
+    pub(crate) target_price: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct LegProblem {
+    pub(crate) leg: usize,
+    pub(crate) side: &'static str,
+    #[serde(flatten)]
+    pub(crate) error: StrikeError,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Resolution {
+    pub(crate) id: String,
+    pub(crate) underlying: String,
+    pub(crate) expiry: String,
+    pub(crate) spot_price: f64,
+    pub(crate) spot_atm: Option<f64>,
+    pub(crate) entry_condition_met: bool,
+    pub(crate) within_trading_window: bool,
+    pub(crate) minutes_until_exit: i64,
+    pub(crate) legs: Vec<ResolvedLeg>,
+    pub(crate) problems: Vec<LegProblem>,
+    pub(crate) would_enter_now: bool,
+}
+
+pub(crate) fn resolve_strategy(
+    strategy: &Strategy,
+    table: &OptionTable,
+    reference: impl Fn(&str) -> Option<f64>,
+) -> Resolution {
+    let mut legs = Vec::with_capacity(strategy.legs.len());
+    let mut problems = Vec::new();
+
+    for (index, leg) in strategy.legs.iter().enumerate() {
+        match resolve(table, leg.side, &leg.strike) {
+            Ok(strike) => {
+                let premium = strike.ltp;
+                let priced = premium.is_finite() && premium > 0.0;
+                let is_short = leg.action == strategy::Action::Sell;
+
+                let stop_price = leg.stop_loss.filter(|_| priced).map(|rule| {
+                    let points = rule.points_from(premium);
+                    if is_short {
+                        premium + points
+                    } else {
+                        premium - points
+                    }
+                });
+                let target_price = leg.target.filter(|_| priced).map(|rule| {
+                    let points = rule.points_from(premium);
+                    if is_short {
+                        (premium - points).max(0.0)
+                    } else {
+                        premium + points
+                    }
+                });
+
+                legs.push(ResolvedLeg {
+                    leg: index,
+                    action: leg.action,
+                    lots: leg.lots,
+                    quantity: leg.lots * table.lot_size,
+                    stop_price,
+                    target_price,
+                    strike,
+                });
+            }
+            Err(error) => problems.push(LegProblem {
+                leg: index,
+                side: leg.side.label(),
+                error,
+            }),
+        }
+    }
+
+    let now = ist_minutes_now();
+    let entry_condition_met = strategy.entry_condition.is_met(reference);
+    let within_trading_window =
+        now >= strategy.entry_time.minutes() && now < strategy.exit_time.minutes();
+    let complete = problems.is_empty() && !legs.is_empty();
+
+    Resolution {
+        id: strategy.id.clone(),
+        underlying: strategy.underlying.clone(),
+        expiry: table.expiry.clone(),
+        spot_price: table.spot_price,
+        spot_atm: crate::option_chain::metrics::spot_atm(table),
+        entry_condition_met,
+        within_trading_window,
+        minutes_until_exit: i64::from(strategy.exit_time.minutes()) - i64::from(now),
+        legs,
+        problems,
+        would_enter_now: complete && entry_condition_met && within_trading_window,
+    }
+}

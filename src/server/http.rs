@@ -10,7 +10,7 @@ use axum::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::get,
+    routing::{get, post},
 };
 use futures_util::stream::{self, Stream};
 use tokio_util::sync::CancellationToken;
@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use serde::{Deserialize, Serialize};
 
 use crate::option_chain::book::ChainColumns;
+use crate::risk_engine;
 use crate::server::state::{EngineState, Snapshot};
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +62,16 @@ pub(crate) async fn serve(
         .route("/api/chain/{symbol}", get(api_chain))
         .route("/api/chain/{symbol}/columns", get(api_chain_columns))
         .route("/api/symbols", get(api_symbols))
+        .route("/api/strategies", get(api_strategies))
+        .route("/api/strategies/template", get(api_strategy_template))
+        .route(
+            "/api/strategies/{id}",
+            get(api_strategy).put(api_save_strategy).delete(api_delete_strategy),
+        )
+        .route("/api/strategies/{id}/resolve", get(api_resolve_strategy))
+        .route("/api/strategies/{id}/activate", post(api_activate))
+        .route("/api/strategies/{id}/deactivate", post(api_deactivate))
+        .route("/api/active", get(api_active))
         .with_state(Http {
             engine,
             shutdown: shutdown.clone(),
@@ -192,3 +203,91 @@ async fn api_stream(
 }
 
 
+fn encoded(status: StatusCode, value: &impl Serialize) -> Response {
+    match serde_json::to_string(value) {
+        Ok(body) => json(status, body),
+        Err(error) => json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{{\"error\":\"cannot encode response: {error}\"}}"),
+        ),
+    }
+}
+
+fn failed(status: StatusCode, error: impl std::fmt::Display) -> Response {
+    let message = error.to_string().replace('"', "'").replace('\n', " ");
+    json(status, format!("{{\"error\":\"{message}\"}}"))
+}
+
+async fn api_strategies() -> Response {
+    encoded(StatusCode::OK, &risk_engine::store::list())
+}
+
+async fn api_strategy_template(Query(params): Query<StreamParams>) -> Response {
+    let underlying = params.chain.unwrap_or_else(|| "NIFTY".to_owned());
+    encoded(
+        StatusCode::OK,
+        &risk_engine::strategy::Strategy::template(&underlying),
+    )
+}
+
+async fn api_active() -> Response {
+    encoded(StatusCode::OK, &risk_engine::store::active())
+}
+
+async fn api_strategy(Path(id): Path<String>) -> Response {
+    match risk_engine::store::load(&id) {
+        Ok(strategy) => encoded(StatusCode::OK, &strategy),
+        Err(error) => failed(StatusCode::NOT_FOUND, error),
+    }
+}
+
+async fn api_save_strategy(Path(id): Path<String>, body: String) -> Response {
+    let mut strategy: risk_engine::strategy::Strategy = match serde_json::from_str(&body) {
+        Ok(strategy) => strategy,
+        Err(error) => return failed(StatusCode::BAD_REQUEST, error),
+    };
+    strategy.id = id;
+
+    if let Err(problem) = strategy.validate() {
+        return encoded(StatusCode::UNPROCESSABLE_ENTITY, &problem);
+    }
+    match risk_engine::store::save(&strategy) {
+        Ok(()) => encoded(StatusCode::OK, &strategy),
+        Err(error) => failed(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_delete_strategy(Path(id): Path<String>) -> Response {
+    match risk_engine::store::remove(&id) {
+        Ok(()) => json(StatusCode::OK, "{\"removed\":true}".to_owned()),
+        Err(error) => failed(StatusCode::NOT_FOUND, error),
+    }
+}
+
+async fn api_activate(Path(id): Path<String>) -> Response {
+    match risk_engine::store::activate(&id) {
+        Ok(ids) => encoded(StatusCode::OK, &ids),
+        Err(error) => failed(StatusCode::NOT_FOUND, error),
+    }
+}
+
+async fn api_deactivate(Path(id): Path<String>) -> Response {
+    match risk_engine::store::deactivate(&id) {
+        Ok(ids) => encoded(StatusCode::OK, &ids),
+        Err(error) => failed(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_resolve_strategy(State(http): State<Http>, Path(id): Path<String>) -> Response {
+    let strategy = match risk_engine::store::load(&id) {
+        Ok(strategy) => strategy,
+        Err(error) => return failed(StatusCode::NOT_FOUND, error),
+    };
+    match http.engine.resolve_strategy(&strategy) {
+        Some(resolution) => encoded(StatusCode::OK, &resolution),
+        None => failed(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("no live chain for {}", strategy.underlying),
+        ),
+    }
+}

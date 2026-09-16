@@ -287,6 +287,18 @@ impl EngineState {
             .and_then(|guard| guard.as_ref().and_then(|book| book.columns(symbol)))
     }
 
+    pub(crate) fn resolve_strategy(
+        &self,
+        strategy: &crate::risk_engine::strategy::Strategy,
+    ) -> Option<crate::risk_engine::Resolution> {
+        let guard = self.book.read().ok()?;
+        let book = guard.as_ref()?;
+        let table = book.table(&strategy.underlying)?;
+        let (_, _, references) = book.stats();
+        Some(crate::risk_engine::resolve_strategy(strategy, table, |key| {
+            references.get(key).copied()
+        }))
+    }
 
     pub(crate) fn chain_symbols(&self) -> Vec<String> {
         self.book
