@@ -80,6 +80,19 @@ fn resolve_one(
     None
 }
 
+pub(crate) fn resolve_index_spot(master: &InstrumentMaster, symbol: &str) -> Option<SpotInstrument> {
+    let wanted = normalize_symbol(symbol);
+    master
+        .spots
+        .iter()
+        .find(|row| {
+            row.kind == SpotKind::Index
+                && (normalize_symbol(&row.underlying_symbol) == wanted
+                    || normalize_symbol(&row.symbol_name) == wanted)
+        })
+        .map(spot_of)
+}
+
 fn spot_of(row: &SpotRow) -> SpotInstrument {
     SpotInstrument {
         segment: row.segment,

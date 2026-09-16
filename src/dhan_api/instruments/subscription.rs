@@ -4,24 +4,24 @@ use anyhow::{Result, bail};
 
 use super::master::{ChainKind, InstrumentMaster, OptionContract, SpotKind, UnderlyingKey};
 use super::segments::ExchangeSegment;
-use super::spot::resolve_spots;
+use super::spot::{SpotInstrument, resolve_index_spot, resolve_spots};
 
 pub(crate) const MAX_PER_MESSAGE: usize = 100;
-pub(crate) const MAX_PER_CONNECTION: usize = 5_000;
-pub(crate) const MAX_CONNECTIONS: usize = 5;
-pub(crate) const MAX_INSTRUMENTS: usize = MAX_PER_CONNECTION * MAX_CONNECTIONS;
+pub(crate) const MAX_INSTRUMENTS: usize = 5_000;
 
 const EXCLUDED_INDEX_CHAINS: &[(ExchangeSegment, &str)] = &[
+    (ExchangeSegment::NseFno, "NIFTYFPI"),
+    (ExchangeSegment::BseFno, "FOCIT"),
     (ExchangeSegment::BseFno, "SENSEX50"),
     (ExchangeSegment::McxComm, "MCXBULLDEX"),
 ];
 
-fn is_excluded(segment: ExchangeSegment, symbol: &str) -> bool {
+const EXTRA_SPOT_INDICES: &[&str] = &["INDIA VIX"];
+
+fn is_excluded(key: &UnderlyingKey) -> bool {
     EXCLUDED_INDEX_CHAINS
         .iter()
-        .any(|(excluded_segment, excluded_symbol)| {
-            *excluded_segment == segment && *excluded_symbol == symbol
-        })
+        .any(|(segment, symbol)| *segment == key.segment && *symbol == key.symbol)
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -52,10 +52,6 @@ impl Pool {
     pub(crate) fn message_count(&self) -> usize {
         self.instruments.len().div_ceil(MAX_PER_MESSAGE)
     }
-
-    pub(crate) fn connections_required(&self) -> usize {
-        self.instruments.len().div_ceil(MAX_PER_CONNECTION)
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,11 +65,10 @@ pub(crate) struct ChainSummary {
 pub(crate) struct CatalogReport {
     pub(crate) as_of: String,
     pub(crate) index_underlyings: usize,
-    pub(crate) stock_underlyings: usize,
     pub(crate) spot_index: usize,
-    pub(crate) spot_equity: usize,
     pub(crate) spot_index_future: usize,
     pub(crate) unresolved: Vec<UnderlyingKey>,
+    pub(crate) missing_extra_spots: Vec<String>,
     pub(crate) index_chains: Vec<ChainSummary>,
     pub(crate) excluded_index_chains: Vec<ChainSummary>,
 }
@@ -102,30 +97,42 @@ impl Catalog {
         self.spot.message_count() + self.index_options.message_count()
     }
 
-    pub(crate) fn connections_required(&self) -> usize {
-        self.len().div_ceil(MAX_PER_CONNECTION)
+    pub(crate) fn spare_capacity(&self) -> usize {
+        MAX_INSTRUMENTS.saturating_sub(self.len())
     }
 }
 
 pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Catalog> {
-    let kinds = live_underlyings(master, as_of);
-    if kinds.is_empty() {
-        bail!("no live option underlyings in the instrument master as of {as_of}");
+    let live = live_index_underlyings(master, as_of);
+    if live.is_empty() {
+        bail!("no live index option underlyings in the instrument master as of {as_of}");
     }
 
-    let index_underlyings = kinds
-        .values()
-        .filter(|kind| **kind == ChainKind::Index)
-        .count();
-    let stock_underlyings = kinds.len() - index_underlyings;
+    let underlyings: BTreeSet<UnderlyingKey> =
+        live.into_iter().filter(|key| !is_excluded(key)).collect();
+    if underlyings.is_empty() {
+        bail!("every live index option underlying is excluded as of {as_of}");
+    }
 
-    let resolution = resolve_spots(master, kinds.iter().map(|(key, kind)| (key, *kind)), as_of);
+    let resolution = resolve_spots(
+        master,
+        underlyings.iter().map(|key| (key, ChainKind::Index)),
+        as_of,
+    );
+
+    let mut spots: Vec<SpotInstrument> = resolution.resolved.values().cloned().collect();
+    let mut missing_extra_spots: Vec<String> = Vec::new();
+    for symbol in EXTRA_SPOT_INDICES {
+        match resolve_index_spot(master, symbol) {
+            Some(instrument) => spots.push(instrument),
+            None => missing_extra_spots.push((*symbol).to_owned()),
+        }
+    }
 
     let mut spot_index = 0;
-    let mut spot_equity = 0;
     let mut spot_index_future = 0;
     let mut spot_seen: BTreeSet<Subscription> = BTreeSet::new();
-    for instrument in resolution.resolved.values() {
+    for instrument in &spots {
         let subscription = Subscription {
             segment: instrument.segment,
             security_id: instrument.security_id.clone(),
@@ -133,8 +140,8 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
         if spot_seen.insert(subscription) {
             match instrument.kind {
                 SpotKind::Index => spot_index += 1,
-                SpotKind::Equity => spot_equity += 1,
                 SpotKind::IndexFuture => spot_index_future += 1,
+                SpotKind::Equity => {}
             }
         }
     }
@@ -149,7 +156,7 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
     for contract in selected {
         let key = UnderlyingKey::new(contract.segment, contract.underlying_symbol.as_str());
 
-        if is_excluded(contract.segment, contract.underlying_symbol.as_str()) {
+        if is_excluded(&key) {
             *excluded_counts
                 .entry((key, contract.expiry.clone()))
                 .or_insert(0) += 1;
@@ -177,8 +184,6 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
             })
             .collect()
     };
-    let index_chains = summarise(counts);
-    let excluded_index_chains = summarise(excluded_counts);
 
     let catalog = Catalog {
         spot: Pool {
@@ -191,14 +196,13 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
         },
         report: CatalogReport {
             as_of: as_of.to_owned(),
-            index_underlyings,
-            stock_underlyings,
+            index_underlyings: underlyings.len(),
             spot_index,
-            spot_equity,
             spot_index_future,
             unresolved: resolution.unresolved,
-            index_chains,
-            excluded_index_chains,
+            missing_extra_spots,
+            index_chains: summarise(counts),
+            excluded_index_chains: summarise(excluded_counts),
         },
     };
 
@@ -207,32 +211,28 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
     }
     if catalog.len() > MAX_INSTRUMENTS {
         bail!(
-            "catalog holds {} instruments, above the {} ceiling ({} connections x {})",
+            "catalog holds {} instruments, {} more than the {} the single feed connection can carry",
             catalog.len(),
-            MAX_INSTRUMENTS,
-            MAX_CONNECTIONS,
-            MAX_PER_CONNECTION
+            catalog.len() - MAX_INSTRUMENTS,
+            MAX_INSTRUMENTS
         );
     }
     Ok(catalog)
 }
 
-fn live_underlyings(master: &InstrumentMaster, as_of: &str) -> BTreeMap<UnderlyingKey, ChainKind> {
-    let mut kinds = BTreeMap::new();
-    for contract in &master.options {
-        if contract.expiry.as_str() < as_of {
-            continue;
-        }
-        let key = UnderlyingKey::new(contract.segment, contract.underlying_symbol.as_str());
-        kinds.insert(key, contract.kind);
-    }
-    kinds
+fn live_index_underlyings(master: &InstrumentMaster, as_of: &str) -> BTreeSet<UnderlyingKey> {
+    master
+        .options
+        .iter()
+        .filter(|contract| contract.kind == ChainKind::Index && contract.expiry.as_str() >= as_of)
+        .map(|contract| UnderlyingKey::new(contract.segment, contract.underlying_symbol.as_str()))
+        .collect()
 }
 
 fn front_expiries(master: &InstrumentMaster, as_of: &str) -> BTreeMap<UnderlyingKey, String> {
     let mut front: BTreeMap<UnderlyingKey, String> = BTreeMap::new();
     for contract in &master.options {
-        if contract.expiry.as_str() < as_of {
+        if contract.kind != ChainKind::Index || contract.expiry.as_str() < as_of {
             continue;
         }
         let key = UnderlyingKey::new(contract.segment, contract.underlying_symbol.as_str());

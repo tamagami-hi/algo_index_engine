@@ -5,12 +5,7 @@ use anyhow::{Result, bail};
 use super::chain::{OptionChain, index_option_chains, select_window};
 use super::master::{ChainKind, InstrumentMaster, UnderlyingKey, to_strike_units};
 use super::spot::{SpotInstrument, resolve_spots};
-use super::subscription::Subscription;
-
-pub(crate) const MAX_INSTRUMENTS_PER_CONNECTION: usize = 5_000;
-pub(crate) const MAX_CONNECTIONS: usize = 5;
-pub(crate) const MAX_INSTRUMENTS_PER_ACCOUNT: usize =
-    MAX_INSTRUMENTS_PER_CONNECTION * MAX_CONNECTIONS;
+use super::subscription::{MAX_INSTRUMENTS, Subscription};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PlanConfig {
@@ -22,7 +17,7 @@ impl Default for PlanConfig {
     fn default() -> Self {
         Self {
             strikes_each_side: 2,
-            max_instruments: MAX_INSTRUMENTS_PER_ACCOUNT,
+            max_instruments: MAX_INSTRUMENTS,
         }
     }
 }
@@ -58,10 +53,6 @@ pub(crate) struct SubscriptionPlan {
 impl SubscriptionPlan {
     pub(crate) fn len(&self) -> usize {
         self.spot_subscriptions.len() + self.option_subscriptions.len()
-    }
-
-    pub(crate) fn connections_required(&self) -> usize {
-        self.len().div_ceil(MAX_INSTRUMENTS_PER_CONNECTION)
     }
 }
 

@@ -1,19 +1,18 @@
-use crate::dhan_api::instruments::{Catalog, MAX_CONNECTIONS, MAX_PER_CONNECTION};
+use crate::dhan_api::instruments::{Catalog, MAX_INSTRUMENTS};
 
 pub(crate) fn report_catalog(catalog: &Catalog) {
     let report = &catalog.report;
 
     println!(
-        "Front-expiry universe as of {}: {} indices, {} F&O stocks",
-        report.as_of, report.index_underlyings, report.stock_underlyings
+        "Front-expiry index universe as of {}: {} indices",
+        report.as_of, report.index_underlyings
     );
 
     println!(
-        "  spot           {:>6} instruments  {:>3} messages   ({} index, {} equity, {} index future)",
+        "  spot           {:>6} instruments  {:>3} messages   ({} index, {} index future)",
         catalog.spot.len(),
         catalog.spot.message_count(),
         report.spot_index,
-        report.spot_equity,
         report.spot_index_future
     );
     println!(
@@ -43,26 +42,14 @@ pub(crate) fn report_catalog(catalog: &Catalog) {
         );
     }
 
-    let connections = catalog.connections_required();
     println!(
-        "  total          {:>6} instruments  {:>3} messages   {} of {} connections",
+        "  total          {:>6} instruments  {:>3} messages   {} of {} on the single connection, {} spare",
         catalog.len(),
         catalog.message_count(),
-        connections,
-        MAX_CONNECTIONS
+        catalog.len(),
+        MAX_INSTRUMENTS,
+        catalog.spare_capacity()
     );
-
-    if connections == 1 {
-        println!(
-            "                 {} slots spare in the single connection",
-            MAX_PER_CONNECTION - catalog.len()
-        );
-    } else {
-        println!(
-            "                 over one connection by {} instruments",
-            catalog.len() - MAX_PER_CONNECTION
-        );
-    }
 
     if !report.unresolved.is_empty() {
         println!(
@@ -71,6 +58,16 @@ pub(crate) fn report_catalog(catalog: &Catalog) {
         );
         for key in &report.unresolved {
             println!("        {:<9} {}", key.segment.as_str(), key.symbol);
+        }
+    }
+
+    if !report.missing_extra_spots.is_empty() {
+        println!(
+            "  {} extra spot index(es) missing from the instrument master:",
+            report.missing_extra_spots.len()
+        );
+        for symbol in &report.missing_extra_spots {
+            println!("        {symbol}");
         }
     }
 }

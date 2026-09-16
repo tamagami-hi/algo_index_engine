@@ -58,12 +58,11 @@ pub(crate) struct CatalogView {
     pub(crate) option_messages: usize,
     pub(crate) total_instruments: usize,
     pub(crate) total_messages: usize,
-    pub(crate) connections_required: usize,
+    pub(crate) spare_capacity: usize,
     pub(crate) index_underlyings: usize,
-    pub(crate) stock_underlyings: usize,
     pub(crate) spot_index: usize,
-    pub(crate) spot_equity: usize,
     pub(crate) spot_index_future: usize,
+    pub(crate) missing_extra_spots: Vec<String>,
     pub(crate) chains: Vec<ChainView>,
 }
 
@@ -96,12 +95,11 @@ impl CatalogView {
             option_messages: catalog.index_options.message_count(),
             total_instruments: catalog.len(),
             total_messages: catalog.message_count(),
-            connections_required: catalog.connections_required(),
+            spare_capacity: catalog.spare_capacity(),
             index_underlyings: report.index_underlyings,
-            stock_underlyings: report.stock_underlyings,
             spot_index: report.spot_index,
-            spot_equity: report.spot_equity,
             spot_index_future: report.spot_index_future,
+            missing_extra_spots: report.missing_extra_spots.clone(),
             chains,
         }
     }
