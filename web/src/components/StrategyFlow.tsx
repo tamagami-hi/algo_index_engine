@@ -21,10 +21,6 @@ function Node({
 
 const Stem = () => <div className="stem" />;
 
-/**
- * The reference flowchart, drawn rather than embedded, so the rules stay
- * readable and can be kept in step with the engine.
- */
 export function StrategyFlow({
   vixThreshold = 12,
   entry = "09:16",

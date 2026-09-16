@@ -171,8 +171,6 @@ fn concurrent_activation_of_different_strategies_loses_nobody() {
         save(&strategy(id, "NIFTY")).expect("save");
     }
 
-    // Activating is read, insert, write. Run them together: without a lock one
-    // thread's set overwrites another's and activations silently vanish.
     std::thread::scope(|scope| {
         for id in &ids {
             scope.spawn(move || activate(id).expect("activate"));
@@ -204,9 +202,6 @@ fn concurrent_writes_leave_one_coherent_file_and_no_temp_droppings() {
         }
     });
 
-    // Whatever the interleaving decided, the file must be readable and agree with
-    // what the reader reports - a shared temp path used to publish another
-    // writer's bytes and leave the set and the file disagreeing.
     let from_reader = active();
     let path = crate::config::data_path("data/strategies/active.json");
     let on_disk: std::collections::BTreeSet<String> = std::fs::read_to_string(&path)

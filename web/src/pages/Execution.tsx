@@ -150,7 +150,6 @@ export function Execution() {
     void load();
   }, [load]);
 
-  // Keep the entry preview fresh while the market moves.
   useEffect(() => {
     if (active.length === 0) {
       return;

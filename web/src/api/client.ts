@@ -20,7 +20,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         detail = JSON.stringify(body);
       }
     } catch {
-      // a non-JSON error body is not worth surfacing beyond the status
     }
     throw new Error(detail);
   }

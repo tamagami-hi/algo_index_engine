@@ -118,7 +118,6 @@ export function Chains() {
             <tbody>
               {chain.strike.map((strike, row) => {
                 const isAtm = row === atmRow;
-                // A call is in the money below the ATM strike, a put above it.
                 const callItm = atmRow !== null && row < atmRow ? "itm" : undefined;
                 const putItm = atmRow !== null && row > atmRow ? "itm" : undefined;
                 const callQuoted = chain.call.quoted[row] ?? false;

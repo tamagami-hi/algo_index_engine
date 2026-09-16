@@ -123,7 +123,6 @@ pub(crate) fn resolve_strategy(
         .and_then(|today| days_between(&today, &table.expiry).ok());
     let gate_met = strategy.dte.allows(days_to_expiry);
 
-    // A chain with no lot size cannot size an order: every quantity would be zero.
     let sizing = (table.lot_size == 0).then(|| SizingProblem {
         problem: "chain reports no lot size",
         underlying: strategy.underlying.clone(),

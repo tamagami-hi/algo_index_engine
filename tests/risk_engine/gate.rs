@@ -321,8 +321,6 @@ fn resolving_refuses_an_entry_outside_the_minute_it_was_set_for() {
         strategy
     };
 
-    // The clock may tick between reading the minute and resolving against it, so
-    // only trust an attempt that began and ended in the same minute.
     let mut entered = None;
     for _ in 0..5 {
         let before = ist_minutes_now();
@@ -339,7 +337,6 @@ fn resolving_refuses_an_entry_outside_the_minute_it_was_set_for() {
     );
     assert!(resolution.would_enter_now, "{resolution:?}");
 
-    // The window opened earlier and has closed: the late-start case.
     let missed = build(now.saturating_sub(30).max(1));
     let resolution = resolve_strategy(&missed, &table, |_| None);
     assert!(

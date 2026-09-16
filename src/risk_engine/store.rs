@@ -6,9 +6,6 @@ use anyhow::{Context, Result, bail};
 
 use super::strategy::Strategy;
 
-/// Serialises read-modify-write of the active set. Activating is read, insert,
-/// write; two of those interleaved lose one edit. Held only across file work,
-/// never across an await.
 static STORE: Mutex<()> = Mutex::new(());
 
 fn guard() -> MutexGuard<'static, ()> {
@@ -40,8 +37,6 @@ fn write_atomically(path: &Path, body: &str) -> Result<()> {
     std::fs::create_dir_all(parent)
         .with_context(|| format!("cannot create {}", parent.display()))?;
 
-    // A temp name unique per write. A shared one lets one writer's rename publish
-    // another writer's bytes, and leaves the loser renaming a file that is gone.
     let unique = format!(
         "{}.{}.{}.tmp",
         path.file_name()
@@ -76,8 +71,6 @@ pub(crate) fn load(id: &str) -> Result<Strategy> {
     serde_json::from_str(&body).with_context(|| format!("cannot parse {}", path.display()))
 }
 
-/// A saved file that could not be read back. Reported rather than dropped: a
-/// strategy silently vanishing from the list is worse than one showing as broken.
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct Unreadable {
     pub(crate) file: String,

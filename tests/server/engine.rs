@@ -29,7 +29,6 @@ fn index_row(symbol: &str, id: &str) -> SpotRow {
     }
 }
 
-/// A catalog whose only chain expires on `expiry`, built as of `as_of`.
 fn catalog_for(expiry: &str, as_of: &str) -> crate::dhan_api::instruments::Catalog {
     let master = InstrumentMaster {
         options: vec![
@@ -69,7 +68,6 @@ fn the_day_moving_forces_a_reload() {
 
 #[test]
 fn an_expiry_that_has_passed_forces_a_reload_so_the_next_one_is_picked_up() {
-    // Built on expiry day itself: front expiry is today, which is legitimate 0DTE.
     let loaded = ("2026-09-22".to_owned(), catalog_for("2026-09-22", "2026-09-22"));
     assert_eq!(
         reload_reason(Some(&loaded), "2026-09-22"),
@@ -77,7 +75,6 @@ fn an_expiry_that_has_passed_forces_a_reload_so_the_next_one_is_picked_up() {
         "expiry day is tradable, not stale"
     );
 
-    // The next day the same catalog names a contract that no longer trades.
     let reason = reload_reason(Some(&loaded), "2026-09-23").expect("must reload");
     assert!(
         reason.contains("2026-09-22") && reason.contains("2026-09-23"),
@@ -87,8 +84,6 @@ fn an_expiry_that_has_passed_forces_a_reload_so_the_next_one_is_picked_up() {
 
 #[test]
 fn a_stale_expiry_is_caught_even_when_the_day_label_still_matches() {
-    // A catalog carrying a past expiry under today's label - a stale cached master.
-    // The day check alone would keep it; the expiry check must not.
     let loaded = ("2026-09-23".to_owned(), catalog_for("2026-09-22", "2026-09-22"));
     let reason = reload_reason(Some(&loaded), "2026-09-23").expect("must reload");
     assert!(

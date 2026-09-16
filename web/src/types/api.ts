@@ -183,6 +183,8 @@ export interface OverallRisk {
 export const MAX_DTE = 6;
 export const DTE_CHOICES: number[] = Array.from({ length: MAX_DTE + 1 }, (_, day) => day);
 
+export const MAX_PREMIUM_PERCENT = 100;
+
 export type DteSelection = number[];
 
 export interface Strategy {

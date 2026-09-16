@@ -73,7 +73,13 @@ impl Threshold {
             RiskMethod::Points => self.value,
         }
     }
+
+    fn beyond_premium(&self) -> bool {
+        self.method == RiskMethod::Percent && self.value > MAX_PREMIUM_PERCENT
+    }
 }
+
+pub(crate) const MAX_PREMIUM_PERCENT: f64 = 100.0;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub(crate) struct TrailingRule {
@@ -85,9 +91,6 @@ pub(crate) struct TrailingRule {
 
 pub(crate) const MAX_DTE: i64 = 6;
 
-/// The days to expiry a strategy is allowed to run on, named one by one. Selecting
-/// every day from 0 to `MAX_DTE` is the "all DTE" case; an empty selection is
-/// rejected at validation because it could never run.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub(crate) struct DteSelection {
@@ -115,8 +118,6 @@ impl DteSelection {
         *self == Self::all()
     }
 
-    /// A negative count is an expiry already past and never qualifies even if the
-    /// stored selection somehow holds it. An unknown count fails closed.
     pub(crate) fn allows(&self, days_to_expiry: Option<i64>) -> bool {
         days_to_expiry.is_some_and(|days| days >= 0 && self.days.contains(&days))
     }
@@ -216,9 +217,6 @@ fn always() -> EntryCondition {
     EntryCondition::Always
 }
 
-/// How wide the entry window is. One minute: an entry set for 09:16 may only be
-/// opened during 09:16, never from 09:17 onward. A restart or a reconnect that
-/// lands after the minute has passed skips the day rather than entering late.
 pub(crate) const ENTRY_WINDOW_MINUTES: u32 = 1;
 
 impl Strategy {
@@ -230,8 +228,6 @@ impl Strategy {
         now >= self.entry_time.minutes() && now < self.entry_closes_at().minutes()
     }
 
-    /// Whether an already-open position may still be held. Wider than the entry
-    /// window: management runs on to the hard exit.
     pub(crate) fn holdable(&self, now: u32) -> bool {
         now >= self.entry_time.minutes() && now < self.exit_time.minutes()
     }
@@ -271,7 +267,7 @@ impl Strategy {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "problem", rename_all = "snake_case")]
 pub(crate) enum StrategyError {
     BlankId,
@@ -283,7 +279,18 @@ pub(crate) enum StrategyError {
     DteOutOfRange { day: i64, max: i64 },
     ExitNotAfterEntry { entry: String, exit: String },
     ZeroLots { leg: usize },
-    NegativeThreshold { leg: usize, field: &'static str },
+    NonPositiveThreshold { leg: Option<usize>, field: &'static str },
+    BeyondPremiumCeiling {
+        leg: Option<usize>,
+        field: &'static str,
+        value: f64,
+        ceiling: f64,
+    },
+    TrailGivesBackMoreThanItCaptures {
+        leg: Option<usize>,
+        arm_at: f64,
+        give_back: f64,
+    },
 }
 
 impl Strategy {
@@ -331,21 +338,96 @@ impl Strategy {
             if leg.lots == 0 {
                 return Err(StrategyError::ZeroLots { leg: index });
             }
-            if leg.stop_loss.is_some_and(|rule| rule.value <= 0.0) {
-                return Err(StrategyError::NegativeThreshold {
-                    leg: index,
-                    field: "stop_loss",
-                });
-            }
-            if leg.target.is_some_and(|rule| rule.value <= 0.0) {
-                return Err(StrategyError::NegativeThreshold {
-                    leg: index,
-                    field: "target",
-                });
+            check_thresholds(Some(index), leg.stop_loss, leg.target, leg.trailing)?;
+
+            let bounded: [(&'static str, Option<Threshold>); 3] = if leg.action == Action::Sell {
+                [
+                    ("target", leg.target),
+                    ("trailing.arm_at", leg.trailing.map(|trail| trail.arm_at)),
+                    ("trailing.give_back", leg.trailing.map(|trail| trail.give_back)),
+                ]
+            } else {
+                [("stop_loss", leg.stop_loss), ("", None), ("", None)]
+            };
+            for (field, rule) in bounded {
+                if let Some(rule) = rule.filter(Threshold::beyond_premium) {
+                    return Err(StrategyError::BeyondPremiumCeiling {
+                        leg: Some(index),
+                        field,
+                        value: rule.value,
+                        ceiling: MAX_PREMIUM_PERCENT,
+                    });
+                }
             }
         }
+
+        check_thresholds(None, self.overall.stop_loss, self.overall.target, self.overall.trailing)?;
+
+        if self.legs.iter().all(|leg| leg.action == Action::Sell) {
+            for (field, rule) in [
+                ("overall.target", self.overall.target),
+                (
+                    "overall.trailing.arm_at",
+                    self.overall.trailing.map(|trail| trail.arm_at),
+                ),
+                (
+                    "overall.trailing.give_back",
+                    self.overall.trailing.map(|trail| trail.give_back),
+                ),
+            ] {
+                if let Some(rule) = rule.filter(Threshold::beyond_premium) {
+                    return Err(StrategyError::BeyondPremiumCeiling {
+                        leg: None,
+                        field,
+                        value: rule.value,
+                        ceiling: MAX_PREMIUM_PERCENT,
+                    });
+                }
+            }
+        }
+
+        for (field, limit) in [
+            ("daily_loss_limit", self.overall.daily_loss_limit),
+            ("daily_profit_target", self.overall.daily_profit_target),
+        ] {
+            if limit.is_some_and(|value| value <= 0.0) {
+                return Err(StrategyError::NonPositiveThreshold { leg: None, field });
+            }
+        }
+
         Ok(())
     }
+}
+
+fn check_thresholds(
+    leg: Option<usize>,
+    stop_loss: Option<Threshold>,
+    target: Option<Threshold>,
+    trailing: Option<TrailingRule>,
+) -> Result<(), StrategyError> {
+    for (field, rule) in [
+        ("stop_loss", stop_loss),
+        ("target", target),
+        ("trailing.arm_at", trailing.map(|trail| trail.arm_at)),
+        ("trailing.give_back", trailing.map(|trail| trail.give_back)),
+    ] {
+        if rule.is_some_and(|threshold| threshold.value <= 0.0) {
+            return Err(StrategyError::NonPositiveThreshold { leg, field });
+        }
+    }
+
+    if let Some(trail) = trailing.filter(|trail| {
+        trail.arm_at.method == trail.give_back.method
+            && trail.give_back.value > trail.arm_at.value
+    }) {
+        return Err(StrategyError::TrailGivesBackMoreThanItCaptures {
+            leg,
+            arm_at: trail.arm_at.value,
+            give_back: trail.give_back.value,
+        });
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

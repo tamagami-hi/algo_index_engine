@@ -186,3 +186,227 @@ fn a_missing_reference_never_fires_an_entry() {
         "an unconditional entry does not need a reference"
     );
 }
+
+
+fn percent(value: f64) -> Threshold {
+    Threshold {
+        method: RiskMethod::Percent,
+        value,
+    }
+}
+
+fn points(value: f64) -> Threshold {
+    Threshold {
+        method: RiskMethod::Points,
+        value,
+    }
+}
+
+fn trail(arm_at: Threshold, give_back: Threshold) -> TrailingRule {
+    TrailingRule {
+        arm_at,
+        give_back,
+        start_after_minutes: None,
+    }
+}
+
+#[test]
+fn a_short_leg_cannot_target_more_profit_than_the_premium_it_collected() {
+    let mut strategy = straddle();
+    strategy.legs[0].target = Some(percent(100.0));
+    assert_eq!(
+        strategy.validate(),
+        Ok(()),
+        "the whole premium is reachable: the option can decay to zero"
+    );
+
+    for beyond in [100.01, 120.0, 200.0] {
+        let mut strategy = straddle();
+        strategy.legs[0].target = Some(percent(beyond));
+        assert_eq!(
+            strategy.validate(),
+            Err(StrategyError::BeyondPremiumCeiling {
+                leg: Some(0),
+                field: "target",
+                value: beyond,
+                ceiling: 100.0,
+            }),
+            "{beyond}% profit on a short can never be reached"
+        );
+    }
+}
+
+#[test]
+fn a_short_legs_profit_trail_is_bounded_by_the_premium_too() {
+    let mut arming = straddle();
+    arming.legs[1].trailing = Some(trail(percent(140.0), percent(10.0)));
+    assert_eq!(
+        arming.validate(),
+        Err(StrategyError::BeyondPremiumCeiling {
+            leg: Some(1),
+            field: "trailing.arm_at",
+            value: 140.0,
+            ceiling: 100.0,
+        }),
+        "a trail that arms past the premium never arms"
+    );
+
+    let mut giving_back = straddle();
+    giving_back.legs[1].trailing = Some(trail(percent(60.0), percent(101.0)));
+    assert!(
+        matches!(
+            giving_back.validate(),
+            Err(StrategyError::BeyondPremiumCeiling { .. })
+                | Err(StrategyError::TrailGivesBackMoreThanItCaptures { .. })
+        ),
+        "giving back more than the premium is not a trail"
+    );
+
+    let mut sensible = straddle();
+    sensible.legs[1].trailing = Some(trail(percent(40.0), percent(15.0)));
+    assert_eq!(sensible.validate(), Ok(()));
+}
+
+#[test]
+fn a_short_legs_stop_loss_is_not_capped_because_a_short_can_lose_more_than_it_took() {
+    let mut strategy = straddle();
+    strategy.legs[0].stop_loss = Some(percent(300.0));
+    assert_eq!(
+        strategy.validate(),
+        Ok(()),
+        "a premium of 100 running to 400 is a 300% loss and entirely possible"
+    );
+}
+
+#[test]
+fn a_long_legs_stop_loss_is_capped_because_it_cannot_lose_more_than_it_paid() {
+    let mut strategy = straddle();
+    strategy.legs[0].action = Action::Buy;
+    strategy.legs[0].stop_loss = Some(percent(100.0));
+    assert_eq!(
+        strategy.validate(),
+        Ok(()),
+        "the whole premium paid can be lost"
+    );
+
+    strategy.legs[0].stop_loss = Some(percent(150.0));
+    assert_eq!(
+        strategy.validate(),
+        Err(StrategyError::BeyondPremiumCeiling {
+            leg: Some(0),
+            field: "stop_loss",
+            value: 150.0,
+            ceiling: 100.0,
+        })
+    );
+
+    let mut upside = straddle();
+    upside.legs[0].action = Action::Buy;
+    upside.legs[0].target = Some(percent(400.0));
+    assert_eq!(
+        upside.validate(),
+        Ok(()),
+        "a long option's upside has no premium ceiling"
+    );
+}
+
+#[test]
+fn a_point_threshold_is_never_measured_against_the_percent_ceiling() {
+    let mut strategy = straddle();
+    strategy.legs[0].target = Some(points(250.0));
+    assert_eq!(
+        strategy.validate(),
+        Ok(()),
+        "250 points is not 250 percent and the ceiling does not apply"
+    );
+}
+
+#[test]
+fn a_trail_may_not_give_back_more_than_it_captured() {
+    let mut strategy = straddle();
+    strategy.legs[0].trailing = Some(trail(percent(40.0), percent(60.0)));
+    assert_eq!(
+        strategy.validate(),
+        Err(StrategyError::TrailGivesBackMoreThanItCaptures {
+            leg: Some(0),
+            arm_at: 40.0,
+            give_back: 60.0,
+        }),
+        "arming at 40 and surrendering 60 puts the stop below the entry"
+    );
+
+    strategy.legs[0].trailing = Some(trail(percent(40.0), percent(40.0)));
+    assert_eq!(
+        strategy.validate(),
+        Ok(()),
+        "giving back exactly what was captured trails to breakeven"
+    );
+
+    let mut mixed = straddle();
+    mixed.legs[0].trailing = Some(trail(percent(40.0), points(60.0)));
+    assert_eq!(
+        mixed.validate(),
+        Ok(()),
+        "percent against points cannot be compared without a premium"
+    );
+}
+
+#[test]
+fn the_whole_positions_profit_is_capped_only_when_every_leg_sold_premium() {
+    let mut all_short = straddle();
+    all_short.overall.target = Some(percent(101.0));
+    assert_eq!(
+        all_short.validate(),
+        Err(StrategyError::BeyondPremiumCeiling {
+            leg: None,
+            field: "overall.target",
+            value: 101.0,
+            ceiling: 100.0,
+        })
+    );
+
+    all_short.overall.target = Some(percent(60.0));
+    all_short.overall.trailing = Some(trail(percent(45.0), percent(12.0)));
+    assert_eq!(all_short.validate(), Ok(()));
+
+    let mut mixed = straddle();
+    mixed.legs[0].action = Action::Buy;
+    mixed.overall.target = Some(percent(150.0));
+    assert_eq!(
+        mixed.validate(),
+        Ok(()),
+        "a position holding a long leg has no premium ceiling on its profit"
+    );
+}
+
+#[test]
+fn a_threshold_of_zero_is_rejected_wherever_it_appears() {
+    for build in [
+        (|strategy: &mut Strategy| strategy.legs[0].stop_loss = Some(percent(0.0)))
+            as fn(&mut Strategy),
+        |strategy: &mut Strategy| strategy.legs[0].target = Some(percent(0.0)),
+        |strategy: &mut Strategy| {
+            strategy.legs[0].trailing = Some(trail(percent(0.0), percent(0.0)));
+        },
+    ] {
+        let mut strategy = straddle();
+        build(&mut strategy);
+        assert!(
+            matches!(
+                strategy.validate(),
+                Err(StrategyError::NonPositiveThreshold { leg: Some(0), .. })
+            ),
+            "a zero threshold is not a rule"
+        );
+    }
+
+    let mut daily = straddle();
+    daily.overall.daily_loss_limit = Some(0.0);
+    assert_eq!(
+        daily.validate(),
+        Err(StrategyError::NonPositiveThreshold {
+            leg: None,
+            field: "daily_loss_limit",
+        })
+    );
+}

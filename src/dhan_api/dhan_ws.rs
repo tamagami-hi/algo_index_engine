@@ -89,9 +89,6 @@ pub(crate) async fn ws_dhan_connection(
                 None
             }
             _ = roll_check.tick() => {
-                // The socket can stay up across midnight. Without this the engine
-                // would never re-enter its cycle and would keep streaming an
-                // expiry that has already passed.
                 match ist_today() {
                     Ok(today) if today != as_of => {
                         println!("trading day rolled from {as_of} to {today}; reloading the universe");

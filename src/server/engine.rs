@@ -102,9 +102,6 @@ async fn cycle(
     .await
 }
 
-/// Why the universe must be rebuilt, or None to keep what is loaded. A catalog is
-/// only good for the trading day it was built for, and only while every chain it
-/// names still trades.
 pub(crate) fn reload_reason(
     loaded: Option<&(String, Catalog)>,
     as_of: &str,

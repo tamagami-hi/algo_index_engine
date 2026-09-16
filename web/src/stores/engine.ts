@@ -41,7 +41,6 @@ function open(symbol: string, set: (partial: Partial<EngineStore>) => void) {
     }
   };
 
-  // EventSource reconnects on its own; surface that rather than failing quietly.
   stream.onerror = () => set({ link: "reconnecting" });
 }
 
@@ -78,7 +77,6 @@ export const useEngine = create<EngineStore>((set, get) => ({
     if (symbol === get().selected) {
       return;
     }
-    // The chain rides the stream, so re-subscribing is how we switch index.
     set({ selected: symbol, chain: null });
     open(symbol, set);
   },

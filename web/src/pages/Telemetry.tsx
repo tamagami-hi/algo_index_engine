@@ -31,7 +31,6 @@ export function Telemetry() {
   const frameAge = feed.last_frame_at_ms === null ? null : now - feed.last_frame_at_ms;
   const streamAge = receivedAt === null ? null : now - receivedAt;
 
-  // A feed that has gone quiet must never look current.
   const feedTone =
     frameAge === null ? "muted" : frameAge < 2_000 ? "up" : frameAge < 10_000 ? "warnfg" : "down";
 
