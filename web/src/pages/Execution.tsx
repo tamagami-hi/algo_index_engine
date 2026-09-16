@@ -46,8 +46,13 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
         <span className={resolution.entry_condition_met ? "tag live" : "tag"}>
           gate {resolution.entry_condition_met ? "met" : "not met"}
         </span>
-        <span className={resolution.within_trading_window ? "tag live" : "tag"}>
-          {resolution.within_trading_window ? "in window" : "out of window"}
+        <span className={resolution.entry_window_open ? "tag live" : "tag"}>
+          {resolution.entry_window_open
+            ? "entry window open"
+            : `entry shut (was until ${resolution.entry_closes_at})`}
+        </span>
+        <span className={resolution.before_hard_exit ? "tag" : "tag down"}>
+          {resolution.before_hard_exit ? "session live" : "past hard exit"}
         </span>
         <span className={resolution.expiry_gate_met ? "tag live" : "tag"}>
           {resolution.days_to_expiry === null
@@ -226,7 +231,7 @@ export function Execution() {
                   <span className="tag">{dte(strategy)}</span>
                   <span className="tag">{strategy.loss_coverage}</span>
                   <span className="tag">
-                    {strategy.entry_time} → {strategy.exit_time}
+                    entry {strategy.entry_time} only → hard exit {strategy.exit_time}
                   </span>
                   <span className="spacer" />
                   <button

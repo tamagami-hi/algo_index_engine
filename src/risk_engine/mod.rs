@@ -47,7 +47,9 @@ pub(crate) struct Resolution {
     pub(crate) spot_price: f64,
     pub(crate) spot_atm: Option<f64>,
     pub(crate) entry_condition_met: bool,
-    pub(crate) within_trading_window: bool,
+    pub(crate) entry_window_open: bool,
+    pub(crate) entry_closes_at: String,
+    pub(crate) before_hard_exit: bool,
     pub(crate) minutes_until_exit: i64,
     pub(crate) days_to_expiry: Option<i64>,
     pub(crate) expiry_gate_met: bool,
@@ -112,8 +114,8 @@ pub(crate) fn resolve_strategy(
 
     let now = ist_minutes_now();
     let entry_condition_met = strategy.entry_condition.is_met(reference);
-    let within_trading_window =
-        now >= strategy.entry_time.minutes() && now < strategy.exit_time.minutes();
+    let entry_window_open = strategy.entry_open(now);
+    let before_hard_exit = strategy.holdable(now);
     let complete = problems.is_empty() && !legs.is_empty();
 
     let days_to_expiry = ist_today()
@@ -134,7 +136,9 @@ pub(crate) fn resolve_strategy(
         spot_price: table.spot_price,
         spot_atm: crate::option_chain::metrics::spot_atm(table),
         entry_condition_met,
-        within_trading_window,
+        entry_window_open,
+        entry_closes_at: strategy.entry_closes_at().to_string(),
+        before_hard_exit,
         minutes_until_exit: i64::from(strategy.exit_time.minutes()) - i64::from(now),
         days_to_expiry,
         expiry_gate_met: gate_met,
@@ -144,7 +148,7 @@ pub(crate) fn resolve_strategy(
         problems,
         would_enter_now: complete
             && entry_condition_met
-            && within_trading_window
+            && entry_window_open
             && gate_met
             && sizing.is_none(),
         sizing,

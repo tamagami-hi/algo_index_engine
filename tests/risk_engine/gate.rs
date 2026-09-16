@@ -236,3 +236,127 @@ fn resolving_reports_an_expiry_already_past_as_shut() {
     );
     assert!(!resolution.would_enter_now);
 }
+
+
+#[test]
+fn the_entry_window_is_one_minute_wide_and_shuts_after_it() {
+    use crate::risk_engine::strategy::{ENTRY_WINDOW_MINUTES, Strategy, TimeOfDay};
+
+    assert_eq!(
+        ENTRY_WINDOW_MINUTES, 1,
+        "an entry set for 09:16 may only open during 09:16"
+    );
+
+    let mut strategy = Strategy::template("NIFTY");
+    strategy.id = "probe".to_owned();
+    strategy.name = "probe".to_owned();
+    strategy.entry_time = TimeOfDay::from_minutes(9 * 60 + 16);
+    assert_eq!(strategy.validate(), Ok(()));
+    assert_eq!(strategy.entry_closes_at().to_string(), "09:17");
+
+    let at = |hours: u32, minutes: u32| hours * 60 + minutes;
+
+    assert!(
+        !strategy.entry_open(at(9, 15)),
+        "09:15 is before the window"
+    );
+    assert!(strategy.entry_open(at(9, 16)), "09:16 is the window");
+    assert!(
+        !strategy.entry_open(at(9, 17)),
+        "09:17 is already too late"
+    );
+
+    for (hours, minutes) in [(9, 18), (9, 30), (11, 0), (13, 45), (14, 58)] {
+        assert!(
+            !strategy.entry_open(at(hours, minutes)),
+            "{hours:02}:{minutes:02} is a late entry and must be refused"
+        );
+    }
+}
+
+#[test]
+fn holding_runs_past_the_entry_window_to_the_hard_exit() {
+    use crate::risk_engine::strategy::{Strategy, TimeOfDay};
+
+    let mut strategy = Strategy::template("NIFTY");
+    strategy.entry_time = TimeOfDay::from_minutes(9 * 60 + 16);
+    strategy.exit_time = TimeOfDay::from_minutes(14 * 60 + 59);
+
+    let at = |hours: u32, minutes: u32| hours * 60 + minutes;
+
+    assert!(!strategy.holdable(at(9, 15)));
+    assert!(strategy.holdable(at(9, 16)));
+    assert!(
+        strategy.holdable(at(11, 0)),
+        "a position opened at 09:16 is still managed at 11:00"
+    );
+    assert!(strategy.holdable(at(14, 58)));
+    assert!(
+        !strategy.holdable(at(14, 59)),
+        "14:59 is the hard exit, not a holdable minute"
+    );
+    assert!(!strategy.holdable(at(15, 30)));
+
+    assert!(
+        !strategy.entry_open(at(11, 0)) && strategy.holdable(at(11, 0)),
+        "holding and opening are different permissions"
+    );
+}
+
+#[test]
+fn resolving_refuses_an_entry_outside_the_minute_it_was_set_for() {
+    use crate::dhan_api::instruments::ist_minutes_now;
+    use crate::risk_engine::resolve_strategy;
+    use crate::risk_engine::strategy::{Strategy, TimeOfDay};
+
+    let now = ist_minutes_now();
+    let table = chain_expiring_in(0);
+
+    let build = |entry: u32| {
+        let mut strategy = Strategy::template("NIFTY");
+        strategy.id = "probe".to_owned();
+        strategy.name = "probe".to_owned();
+        strategy.entry_time = TimeOfDay::from_minutes(entry);
+        strategy.exit_time = TimeOfDay::from_minutes(entry + 120);
+        strategy
+    };
+
+    // The clock may tick between reading the minute and resolving against it, so
+    // only trust an attempt that began and ended in the same minute.
+    let mut entered = None;
+    for _ in 0..5 {
+        let before = ist_minutes_now();
+        let resolution = resolve_strategy(&build(before), &table, |_| None);
+        if ist_minutes_now() == before {
+            entered = Some(resolution);
+            break;
+        }
+    }
+    let resolution = entered.expect("five attempts all straddled a minute boundary");
+    assert!(
+        resolution.entry_window_open,
+        "the current minute is the entry minute"
+    );
+    assert!(resolution.would_enter_now, "{resolution:?}");
+
+    // The window opened earlier and has closed: the late-start case.
+    let missed = build(now.saturating_sub(30).max(1));
+    let resolution = resolve_strategy(&missed, &table, |_| None);
+    assert!(
+        !resolution.entry_window_open,
+        "a window that opened 30 minutes ago is shut"
+    );
+    assert!(
+        !resolution.would_enter_now,
+        "a late start must not enter, {resolution:?}"
+    );
+    assert!(
+        resolution.before_hard_exit,
+        "the session is still live even though entry is shut"
+    );
+
+    let too_early = build(now + 30);
+    let resolution = resolve_strategy(&too_early, &table, |_| None);
+    assert!(!resolution.entry_window_open, "the window has not opened");
+    assert!(!resolution.would_enter_now);
+}

@@ -216,6 +216,27 @@ fn always() -> EntryCondition {
     EntryCondition::Always
 }
 
+/// How wide the entry window is. One minute: an entry set for 09:16 may only be
+/// opened during 09:16, never from 09:17 onward. A restart or a reconnect that
+/// lands after the minute has passed skips the day rather than entering late.
+pub(crate) const ENTRY_WINDOW_MINUTES: u32 = 1;
+
+impl Strategy {
+    pub(crate) fn entry_closes_at(&self) -> TimeOfDay {
+        TimeOfDay::from_minutes(self.entry_time.minutes() + ENTRY_WINDOW_MINUTES)
+    }
+
+    pub(crate) fn entry_open(&self, now: u32) -> bool {
+        now >= self.entry_time.minutes() && now < self.entry_closes_at().minutes()
+    }
+
+    /// Whether an already-open position may still be held. Wider than the entry
+    /// window: management runs on to the hard exit.
+    pub(crate) fn holdable(&self, now: u32) -> bool {
+        now >= self.entry_time.minutes() && now < self.exit_time.minutes()
+    }
+}
+
 impl Strategy {
     pub(crate) fn template(underlying: &str) -> Self {
         let short_leg = |side: Side| LegDefinition {

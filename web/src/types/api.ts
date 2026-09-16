@@ -240,7 +240,9 @@ export interface Resolution {
   spot_price: number;
   spot_atm: number | null;
   entry_condition_met: boolean;
-  within_trading_window: boolean;
+  entry_window_open: boolean;
+  entry_closes_at: string;
+  before_hard_exit: boolean;
   minutes_until_exit: number;
   days_to_expiry: number | null;
   expiry_gate_met: boolean;

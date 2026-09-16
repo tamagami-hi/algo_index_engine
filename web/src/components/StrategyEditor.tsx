@@ -286,7 +286,7 @@ export function StrategyEditor({
                 ))}
               </select>
             </Field>
-            <Field label="entry (IST)">
+            <Field label="entry (IST, 1 min only)">
               <input
                 value={draft.entry_time}
                 onChange={(event) => setDraft({ ...draft, entry_time: event.target.value })}
