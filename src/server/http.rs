@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    extract::State,
+    extract::{Path, State},
     http::{StatusCode, header},
     response::{
         IntoResponse, Response,
@@ -42,6 +42,8 @@ pub(crate) async fn serve(
         .route("/ready", get(ready))
         .route("/api/state", get(api_state))
         .route("/api/stream", get(api_stream))
+        .route("/api/chains", get(api_chains))
+        .route("/api/chain/{symbol}", get(api_chain))
         .with_state(Http {
             engine,
             shutdown: shutdown.clone(),
@@ -94,6 +96,25 @@ async fn ready(State(http): State<Http>) -> Response {
 
 async fn api_state(State(http): State<Http>) -> Response {
     json(StatusCode::OK, encode(&http.engine))
+}
+
+async fn api_chains(State(http): State<Http>) -> Response {
+    let metrics = http.engine.chain_metrics();
+    let body = serde_json::to_string(&metrics).unwrap_or_else(|_| "[]".to_owned());
+    json(StatusCode::OK, body)
+}
+
+async fn api_chain(State(http): State<Http>, Path(symbol): Path<String>) -> Response {
+    match http.engine.chain_view(&symbol) {
+        Some(view) => {
+            let body = serde_json::to_string(&view).unwrap_or_else(|_| "{}".to_owned());
+            json(StatusCode::OK, body)
+        }
+        None => json(
+            StatusCode::NOT_FOUND,
+            format!("{{\"error\":\"no chain for {symbol}\"}}"),
+        ),
+    }
 }
 
 async fn api_stream(

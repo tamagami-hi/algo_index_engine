@@ -7,6 +7,7 @@ use crate::dhan_api::dhan_auth::get_dhan_credentials;
 use crate::dhan_api::dhan_ws::ws_dhan_connection;
 use crate::dhan_api::instrument_dl::download_instrument_master;
 use crate::dhan_api::instruments::{Catalog, build_catalog, ist_today, load_instrument_master};
+use crate::option_chain::ChainBook;
 use crate::server::report::report_catalog;
 use crate::server::state::{EngineState, Phase};
 
@@ -69,9 +70,10 @@ async fn cycle(
     if loaded.as_ref().map(|(day, _)| day.as_str()) != Some(as_of.as_str()) {
         engine.set_phase(Phase::LoadingInstruments, format!("trading day {as_of}"));
         match load_universe(&as_of).await {
-            Ok(catalog) => {
+            Ok((catalog, book)) => {
                 report_catalog(&catalog);
                 engine.set_catalog(&as_of, &catalog);
+                engine.set_book(book);
                 *loaded = Some((as_of.clone(), catalog));
             }
             Err(error) => {
@@ -97,12 +99,15 @@ async fn cycle(
     .await
 }
 
-async fn load_universe(as_of: &str) -> Result<Catalog> {
+async fn load_universe(as_of: &str) -> Result<(Catalog, ChainBook)> {
     let instrument_path = download_instrument_master(as_of).await?;
     let master = load_instrument_master(&instrument_path)?;
     println!(
         "Instrument master: {} option contracts, {} spot rows from {} CSV rows",
         master.report.option_rows, master.report.spot_rows, master.report.total_rows
     );
-    build_catalog(&master, as_of)
+    let catalog = build_catalog(&master, as_of)?;
+    let book = ChainBook::build(&master, &catalog);
+    println!("Option chain book: {} chains assembled", book.chains());
+    Ok((catalog, book))
 }

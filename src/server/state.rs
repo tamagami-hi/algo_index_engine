@@ -1,10 +1,14 @@
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
 use tokio::sync::watch;
 
 use crate::dhan_api::feed::Packet;
 use crate::dhan_api::instruments::Catalog;
+use crate::option_chain::ChainBook;
+use crate::option_chain::book::ChainView as ChainDetail;
+use crate::option_chain::metrics::ChainMetrics;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -125,8 +129,25 @@ pub(crate) struct FeedView {
     pub(crate) unknown_packets: u64,
     pub(crate) undecodable_frames: u64,
     pub(crate) two_sided_packets: u64,
+    pub(crate) chains: usize,
+    pub(crate) applied: u64,
+    pub(crate) unmatched: u64,
+    pub(crate) indices: BTreeMap<String, f64>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ChainSummaryView {
+    pub(crate) symbol: String,
+    pub(crate) expiry: String,
+    pub(crate) spot_price: f64,
+    pub(crate) spot_atm: Option<f64>,
+    pub(crate) market_atm: Option<f64>,
+    pub(crate) max_pain: Option<f64>,
+    pub(crate) atm_straddle: Option<f64>,
+    pub(crate) pcr_oi: f64,
+    pub(crate) quoted_strikes: usize,
+    pub(crate) strikes: usize,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Snapshot {
@@ -140,6 +161,7 @@ pub(crate) struct Snapshot {
     pub(crate) as_of: Option<String>,
     pub(crate) catalog: Option<CatalogView>,
     pub(crate) feed: FeedView,
+    pub(crate) chains: Vec<ChainSummaryView>,
 }
 
 impl Snapshot {
@@ -155,6 +177,7 @@ impl Snapshot {
             as_of: None,
             catalog: None,
             feed: FeedView::default(),
+            chains: Vec::new(),
         }
     }
 }
@@ -162,6 +185,7 @@ impl Snapshot {
 #[derive(Clone)]
 pub(crate) struct EngineState {
     sender: Arc<watch::Sender<Snapshot>>,
+    book: Arc<RwLock<Option<ChainBook>>>,
 }
 
 impl EngineState {
@@ -169,6 +193,7 @@ impl EngineState {
         let (sender, _) = watch::channel(Snapshot::new(now_unix()));
         Self {
             sender: Arc::new(sender),
+            book: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -207,6 +232,83 @@ impl EngineState {
         });
     }
 
+    pub(crate) fn set_book(&self, book: ChainBook) {
+        let chains = book.chains();
+        *self.book.write().unwrap_or_else(|error| {
+            self.book.clear_poison();
+            error.into_inner()
+        }) = Some(book);
+        self.update(|snapshot| snapshot.feed.chains = chains);
+    }
+
+    pub(crate) fn apply_feed(&self, message: &crate::dhan_api::feed::Message) {
+        let mut guard = self.book.write().unwrap_or_else(|error| {
+            self.book.clear_poison();
+            error.into_inner()
+        });
+        if let Some(book) = guard.as_mut() {
+            book.apply(message);
+        }
+    }
+
+    pub(crate) fn chain_metrics(&self) -> Vec<ChainMetrics> {
+        self.book
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(ChainBook::metrics))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn chain_view(&self, symbol: &str) -> Option<ChainDetail> {
+        self.book
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().and_then(|book| book.view(symbol)))
+    }
+
+    pub(crate) fn publish_chain_summary(&self) {
+        let metrics = self.chain_metrics();
+        let (applied, unmatched, references) = self
+            .book
+            .read()
+            .ok()
+            .and_then(|guard| {
+                guard.as_ref().map(|book| {
+                    (
+                        book.applied(),
+                        book.unmatched(),
+                        book.references()
+                            .iter()
+                            .map(|(label, price)| (label.clone(), *price))
+                            .collect::<BTreeMap<String, f64>>(),
+                    )
+                })
+            })
+            .unwrap_or_default();
+
+        let summaries: Vec<ChainSummaryView> = metrics
+            .iter()
+            .map(|chain| ChainSummaryView {
+                symbol: chain.symbol.clone(),
+                expiry: chain.expiry.clone(),
+                spot_price: chain.spot_price,
+                spot_atm: chain.spot_atm,
+                market_atm: chain.market_atm,
+                max_pain: chain.max_pain,
+                atm_straddle: chain.atm_straddle,
+                pcr_oi: chain.pcr_oi,
+                quoted_strikes: chain.quoted_strikes,
+                strikes: chain.strikes,
+            })
+            .collect();
+
+        self.update(|snapshot| {
+            snapshot.feed.applied = applied;
+            snapshot.feed.unmatched = unmatched;
+            snapshot.feed.indices = references;
+            snapshot.chains = summaries;
+        });
+    }
 
     pub(crate) fn feed_connected(&self) {
         self.update(|snapshot| {

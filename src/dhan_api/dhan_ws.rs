@@ -103,6 +103,7 @@ pub(crate) async fn ws_dhan_connection(
                         println!("Dhan feed sent disconnect reason {reason}");
                     }
                     state.feed_packet(message);
+                    state.apply_feed(message);
                 }
             }
             Message::Text(text) => {

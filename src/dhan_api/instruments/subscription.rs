@@ -62,6 +62,13 @@ pub(crate) struct ChainSummary {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct ChainUnderlying {
+    pub(crate) key: UnderlyingKey,
+    pub(crate) expiry: String,
+    pub(crate) spot: SpotInstrument,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CatalogReport {
     pub(crate) as_of: String,
     pub(crate) index_underlyings: usize,
@@ -77,6 +84,8 @@ pub(crate) struct CatalogReport {
 pub(crate) struct Catalog {
     pub(crate) spot: Pool,
     pub(crate) index_options: Pool,
+    pub(crate) spot_labels: BTreeMap<Subscription, String>,
+    pub(crate) underlyings: Vec<ChainUnderlying>,
     pub(crate) report: CatalogReport,
 }
 
@@ -108,36 +117,43 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
         bail!("no live index option underlyings in the instrument master as of {as_of}");
     }
 
-    let underlyings: BTreeSet<UnderlyingKey> =
+    let live_underlyings: BTreeSet<UnderlyingKey> =
         live.into_iter().filter(|key| !is_excluded(key)).collect();
-    if underlyings.is_empty() {
+    let underlyings_count = live_underlyings.len();
+    if live_underlyings.is_empty() {
         bail!("every live index option underlying is excluded as of {as_of}");
     }
 
     let resolution = resolve_spots(
         master,
-        underlyings.iter().map(|key| (key, ChainKind::Index)),
+        live_underlyings.iter().map(|key| (key, ChainKind::Index)),
         as_of,
     );
 
-    let mut spots: Vec<SpotInstrument> = resolution.resolved.values().cloned().collect();
+    let mut spots: Vec<(String, SpotInstrument)> = resolution
+        .resolved
+        .iter()
+        .map(|(key, instrument)| (key.symbol.clone(), instrument.clone()))
+        .collect();
     let mut missing_extra_spots: Vec<String> = Vec::new();
     for symbol in EXTRA_SPOT_INDICES {
         match resolve_index_spot(master, symbol) {
-            Some(instrument) => spots.push(instrument),
+            Some(instrument) => spots.push(((*symbol).to_owned(), instrument)),
             None => missing_extra_spots.push((*symbol).to_owned()),
         }
     }
 
     let mut spot_index = 0;
     let mut spot_index_future = 0;
+    let mut spot_labels: BTreeMap<Subscription, String> = BTreeMap::new();
     let mut spot_seen: BTreeSet<Subscription> = BTreeSet::new();
-    for instrument in &spots {
+    for (label, instrument) in &spots {
         let subscription = Subscription {
             segment: instrument.segment,
             security_id: instrument.security_id.clone(),
         };
-        if spot_seen.insert(subscription) {
+        if spot_seen.insert(subscription.clone()) {
+            spot_labels.insert(subscription, label.clone());
             match instrument.kind {
                 SpotKind::Index => spot_index += 1,
                 SpotKind::IndexFuture => spot_index_future += 1,
@@ -185,6 +201,21 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
             .collect()
     };
 
+    let index_chains = summarise(counts);
+    let underlyings: Vec<ChainUnderlying> = index_chains
+        .iter()
+        .filter_map(|chain| {
+            resolution
+                .resolved
+                .get(&chain.underlying)
+                .map(|spot| ChainUnderlying {
+                    key: chain.underlying.clone(),
+                    expiry: chain.expiry.clone(),
+                    spot: spot.clone(),
+                })
+        })
+        .collect();
+
     let catalog = Catalog {
         spot: Pool {
             label: "spot",
@@ -194,14 +225,16 @@ pub(crate) fn build_catalog(master: &InstrumentMaster, as_of: &str) -> Result<Ca
             label: "index_options",
             instruments: option_instruments,
         },
+        spot_labels,
+        underlyings,
         report: CatalogReport {
             as_of: as_of.to_owned(),
-            index_underlyings: underlyings.len(),
+            index_underlyings: underlyings_count,
             spot_index,
             spot_index_future,
             unresolved: resolution.unresolved,
             missing_extra_spots,
-            index_chains: summarise(counts),
+            index_chains,
             excluded_index_chains: summarise(excluded_counts),
         },
     };
