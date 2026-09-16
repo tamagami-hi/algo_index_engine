@@ -5,6 +5,9 @@ mod server;
 
 use anyhow::Result;
 
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     config::load_env()?;
