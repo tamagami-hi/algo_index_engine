@@ -92,8 +92,9 @@ function ThresholdInput({
   onChange: (next: Threshold | undefined) => void;
   ceiling?: number;
 }) {
-  const capped =
-    ceiling !== undefined && value?.method === "percent" && value.value > ceiling;
+  const method = value?.method ?? "percent";
+  const capped = ceiling !== undefined && method === "percent" && (value?.value ?? 0) > ceiling;
+  const limit = ceiling !== undefined && method === "percent" ? ceiling : undefined;
 
   return (
     <div style={{ display: "flex", gap: "0.3rem", flexDirection: "column" }}>
@@ -102,7 +103,7 @@ function ThresholdInput({
           type="number"
           step="0.5"
           min="0"
-          max={ceiling !== undefined && value?.method === "percent" ? ceiling : undefined}
+          max={limit}
           style={{ width: "5rem", borderColor: capped ? "var(--down)" : undefined }}
           value={value?.value ?? ""}
           placeholder="off"
@@ -116,7 +117,7 @@ function ThresholdInput({
           }}
         />
         <select
-          value={value?.method ?? "percent"}
+          value={method}
           disabled={!value}
           onChange={(event) =>
             value

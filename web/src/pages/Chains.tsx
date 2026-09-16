@@ -2,9 +2,20 @@ import { useEngine } from "../stores/engine";
 import { Big, Panel, compact, num } from "../components/ui";
 import type { SideColumns } from "../types/api";
 
-function cell(side: SideColumns, row: number, field: keyof SideColumns): number {
-  const column = side[field] as number[];
-  return column[row] ?? 0;
+function cell(
+  side: SideColumns,
+  row: number,
+  field: keyof SideColumns,
+): number | null {
+  const column = side[field] as (number | null)[];
+  return column[row] ?? null;
+}
+
+function tone(value: number | null): string {
+  if (value === null || value === 0) {
+    return "muted";
+  }
+  return value > 0 ? "up" : "down";
 }
 
 export function Chains() {
@@ -135,11 +146,11 @@ export function Chains() {
                     <td className={callQuoted ? callItm : "stale"}>
                       {num(cell(chain.call, row, "ltp"))}
                     </td>
-                    <td className={callChange > 0 ? "up" : callChange < 0 ? "down" : "muted"}>
+                    <td className={tone(callChange)}>
                       {num(callChange)}
                     </td>
                     <td className="strike">{num(strike, 0)}</td>
-                    <td className={putChange > 0 ? "up" : putChange < 0 ? "down" : "muted"}>
+                    <td className={tone(putChange)}>
                       {num(putChange)}
                     </td>
                     <td className={putQuoted ? putItm : "stale"}>

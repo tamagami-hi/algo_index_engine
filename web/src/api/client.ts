@@ -2,6 +2,7 @@ import type {
   ChainColumns,
   ChainMetrics,
   Listing,
+  Readiness,
   Resolution,
   Snapshot,
   Strategy,
@@ -26,8 +27,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function requestAllowingFailure<T>(path: string): Promise<T> {
+  const response = await fetch(path);
+  return (await response.json()) as T;
+}
+
 export const api = {
   state: () => request<Snapshot>("/api/state"),
+  ready: () => requestAllowingFailure<Readiness>("/ready"),
   symbols: () => request<string[]>("/api/symbols"),
   chains: () => request<ChainMetrics[]>("/api/chains"),
   chainColumns: (symbol: string) =>

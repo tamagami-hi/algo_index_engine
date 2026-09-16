@@ -39,7 +39,7 @@ function condition(strategy: Strategy): string {
   return `${gate.reference} ${operator} ${gate.value}`;
 }
 
-function ResolutionView({ resolution }: { resolution: Resolution }) {
+export function ResolutionView({ resolution }: { resolution: Resolution }) {
   return (
     <div style={{ marginTop: "0.5rem" }}>
       <div className="rowline">
@@ -66,8 +66,22 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
         <span className="note">
           spot {num(resolution.spot_price)} · atm {num(resolution.spot_atm, 0)} · lot{" "}
           {resolution.lot_size} · {resolution.minutes_until_exit} min to exit
+          {resolution.spot_age_ms === null
+            ? " · spot never quoted"
+            : ` · spot ${(resolution.spot_age_ms / 1000).toFixed(1)}s old`}
         </span>
       </div>
+
+      {resolution.blocked_because.length > 0 ? (
+        <div className="note" data-testid="blockers">
+          <strong>not entering because:</strong>
+          <ul style={{ margin: "0.2rem 0 0 1rem", padding: 0 }}>
+            {resolution.blocked_because.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {resolution.legs.length > 0 ? (
         <table style={{ marginTop: "0.3rem" }}>
@@ -107,13 +121,6 @@ function ResolutionView({ resolution }: { resolution: Resolution }) {
             ))}
           </tbody>
         </table>
-      ) : null}
-
-      {resolution.sizing ? (
-        <div className="err">
-          {resolution.sizing.underlying}: {resolution.sizing.problem} — cannot size an
-          order, entry is blocked
-        </div>
       ) : null}
 
       {resolution.problems.length > 0 ? (

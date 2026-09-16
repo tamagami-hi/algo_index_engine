@@ -71,6 +71,7 @@ export interface CatalogView {
 
 export interface Snapshot {
   version: string;
+  sequence: number;
   phase: Phase;
   phase_label: string;
   detail: string;
@@ -128,8 +129,31 @@ export interface ChainColumns extends ChainMetrics {
 }
 
 export interface StreamFrame {
+  sequence: number;
+  published_at_ms: number;
+  feed_age_ms?: number;
+  feed_silence_limit_ms: number;
+  publish_interval_ms: number;
   chain?: ChainColumns;
   state: Snapshot;
+}
+
+export interface Liveness {
+  alive: boolean;
+  version: string;
+  phase: string;
+  uptime_seconds: number;
+}
+
+export interface Readiness {
+  ready: boolean;
+  phase: string;
+  detail: string;
+  reasons: string[];
+  catalog_loaded: boolean;
+  chains: number;
+  feed_connected: boolean;
+  last_frame_age_ms: number | null;
 }
 
 export type RiskMethod = "percent" | "points";
@@ -241,6 +265,7 @@ export interface Resolution {
   expiry: string;
   spot_price: number;
   spot_atm: number | null;
+  spot_age_ms: number | null;
   entry_condition_met: boolean;
   entry_window_open: boolean;
   entry_closes_at: string;
@@ -252,6 +277,7 @@ export interface Resolution {
   lot_size: number;
   legs: ResolvedLeg[];
   problems: LegProblem[];
-  sizing?: { problem: string; underlying: string };
+  blockers: Record<string, unknown>[];
+  blocked_because: string[];
   would_enter_now: boolean;
 }

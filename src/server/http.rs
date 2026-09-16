@@ -37,6 +37,7 @@ struct StreamFrame {
     published_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     feed_age_ms: Option<u64>,
+    feed_silence_limit_ms: u64,
     publish_interval_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain: Option<ChainColumns>,
@@ -365,6 +366,8 @@ async fn api_stream(
                 sequence: snapshot.sequence,
                 published_at_ms: crate::server::state::now_millis(),
                 feed_age_ms,
+                feed_silence_limit_ms: crate::option_chain::quality::freshness()
+                    .feed_silence_max_ms,
                 publish_interval_ms: interval.as_millis() as u64,
                 chain: chain
                     .as_deref()

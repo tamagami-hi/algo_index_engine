@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useEngine } from "./stores/engine";
+import { LinkStatus, StaleBanner } from "./components/LinkStatus";
 import { Telemetry } from "./pages/Telemetry";
 import { Chains } from "./pages/Chains";
 import { Execution } from "./pages/Execution";
@@ -20,7 +21,6 @@ function currentRoute(): Route {
 export function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
   const connect = useEngine((store) => store.connect);
-  const link = useEngine((store) => store.link);
   const snapshot = useEngine((store) => store.snapshot);
   const selected = useEngine((store) => store.selected);
 
@@ -33,16 +33,6 @@ export function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
-
-  const phase = snapshot?.phase;
-  const dotClass =
-    link !== "open"
-      ? "dot bad"
-      : phase === "feed_connected"
-        ? "dot live"
-        : phase && phase.endsWith("failed")
-          ? "dot bad"
-          : "dot warn";
 
   return (
     <div className="shell">
@@ -60,15 +50,13 @@ export function App() {
           ))}
         </nav>
         <span className="spacer" />
-        <span className="link">
-          <span className={dotClass} />
-          {link === "open" ? (snapshot?.phase_label ?? "connected") : link}
-        </span>
+        <LinkStatus />
         <span className="link">{selected}</span>
         {snapshot ? <span className="link">v{snapshot.version}</span> : null}
       </header>
 
       <main>
+        <StaleBanner />
         {route === "telemetry" ? <Telemetry /> : null}
         {route === "chains" ? <Chains /> : null}
         {route === "execution" ? <Execution /> : null}
