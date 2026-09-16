@@ -7,7 +7,7 @@ use tokio::sync::watch;
 use crate::dhan_api::feed::Packet;
 use crate::dhan_api::instruments::Catalog;
 use crate::option_chain::ChainBook;
-use crate::option_chain::book::ChainView as ChainDetail;
+use crate::option_chain::book::{ChainColumns, ChainView as ChainDetail};
 use crate::option_chain::metrics::ChainMetrics;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -117,7 +117,7 @@ pub(crate) struct FeedView {
     pub(crate) disconnects: u64,
     pub(crate) frames: u64,
     pub(crate) bytes: u64,
-    pub(crate) last_frame_at: Option<i64>,
+    pub(crate) last_frame_at_ms: Option<i64>,
     pub(crate) subscribed: usize,
     pub(crate) packets: u64,
     pub(crate) index_packets: u64,
@@ -155,8 +155,8 @@ pub(crate) struct Snapshot {
     pub(crate) phase: Phase,
     pub(crate) phase_label: &'static str,
     pub(crate) detail: String,
-    pub(crate) started_at: i64,
-    pub(crate) updated_at: i64,
+    pub(crate) started_at_ms: i64,
+    pub(crate) updated_at_ms: i64,
     pub(crate) uptime_seconds: i64,
     pub(crate) as_of: Option<String>,
     pub(crate) catalog: Option<CatalogView>,
@@ -171,8 +171,8 @@ impl Snapshot {
             phase: Phase::Starting,
             phase_label: Phase::Starting.label(),
             detail: String::new(),
-            started_at: now,
-            updated_at: now,
+            started_at_ms: now,
+            updated_at_ms: now,
             uptime_seconds: 0,
             as_of: None,
             catalog: None,
@@ -190,7 +190,7 @@ pub(crate) struct EngineState {
 
 impl EngineState {
     pub(crate) fn new() -> Self {
-        let (sender, _) = watch::channel(Snapshot::new(now_unix()));
+        let (sender, _) = watch::channel(Snapshot::new(now_millis()));
         Self {
             sender: Arc::new(sender),
             book: Arc::new(RwLock::new(None)),
@@ -203,16 +203,16 @@ impl EngineState {
 
     pub(crate) fn snapshot(&self) -> Snapshot {
         let mut snapshot = self.sender.borrow().clone();
-        snapshot.uptime_seconds = now_unix() - snapshot.started_at;
+        snapshot.uptime_seconds = (now_millis() - snapshot.started_at_ms) / 1_000;
         snapshot
     }
 
     fn update(&self, apply: impl FnOnce(&mut Snapshot)) {
         self.sender.send_modify(|snapshot| {
             apply(snapshot);
-            let now = now_unix();
-            snapshot.updated_at = now;
-            snapshot.uptime_seconds = now - snapshot.started_at;
+            let now = now_millis();
+            snapshot.updated_at_ms = now;
+            snapshot.uptime_seconds = (now - snapshot.started_at_ms) / 1_000;
             snapshot.phase_label = snapshot.phase.label();
         });
     }
@@ -241,15 +241,6 @@ impl EngineState {
         self.update(|snapshot| snapshot.feed.chains = chains);
     }
 
-    pub(crate) fn apply_feed(&self, message: &crate::dhan_api::feed::Message) {
-        let mut guard = self.book.write().unwrap_or_else(|error| {
-            self.book.clear_poison();
-            error.into_inner()
-        });
-        if let Some(book) = guard.as_mut() {
-            book.apply(message);
-        }
-    }
 
     pub(crate) fn chain_metrics(&self) -> Vec<ChainMetrics> {
         self.book
@@ -266,49 +257,6 @@ impl EngineState {
             .and_then(|guard| guard.as_ref().and_then(|book| book.view(symbol)))
     }
 
-    pub(crate) fn publish_chain_summary(&self) {
-        let metrics = self.chain_metrics();
-        let (applied, unmatched, references) = self
-            .book
-            .read()
-            .ok()
-            .and_then(|guard| {
-                guard.as_ref().map(|book| {
-                    (
-                        book.applied(),
-                        book.unmatched(),
-                        book.references()
-                            .iter()
-                            .map(|(label, price)| (label.clone(), *price))
-                            .collect::<BTreeMap<String, f64>>(),
-                    )
-                })
-            })
-            .unwrap_or_default();
-
-        let summaries: Vec<ChainSummaryView> = metrics
-            .iter()
-            .map(|chain| ChainSummaryView {
-                symbol: chain.symbol.clone(),
-                expiry: chain.expiry.clone(),
-                spot_price: chain.spot_price,
-                spot_atm: chain.spot_atm,
-                market_atm: chain.market_atm,
-                max_pain: chain.max_pain,
-                atm_straddle: chain.atm_straddle,
-                pcr_oi: chain.pcr_oi,
-                quoted_strikes: chain.quoted_strikes,
-                strikes: chain.strikes,
-            })
-            .collect();
-
-        self.update(|snapshot| {
-            snapshot.feed.applied = applied;
-            snapshot.feed.unmatched = unmatched;
-            snapshot.feed.indices = references;
-            snapshot.chains = summaries;
-        });
-    }
 
     pub(crate) fn feed_connected(&self) {
         self.update(|snapshot| {
@@ -328,51 +276,137 @@ impl EngineState {
         });
     }
 
-    pub(crate) fn feed_frame(&self, bytes: usize) {
-        self.update(|snapshot| {
-            snapshot.feed.frames += 1;
-            snapshot.feed.bytes += bytes as u64;
-            snapshot.feed.last_frame_at = Some(now_unix());
-        });
-    }
-
     pub(crate) fn feed_subscribed(&self, instruments: usize) {
-        self.update(|snapshot| {
-            snapshot.feed.subscribed = instruments;
-        });
+        self.update(|snapshot| snapshot.feed.subscribed = instruments);
     }
 
-    pub(crate) fn feed_undecodable(&self, _bytes: usize) {
-        self.update(|snapshot| {
-            snapshot.feed.undecodable_frames += 1;
-        });
+    pub(crate) fn chain_columns(&self, symbol: &str) -> Option<ChainColumns> {
+        self.book
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().and_then(|book| book.columns(symbol)))
     }
 
-    pub(crate) fn feed_packet(&self, message: &crate::dhan_api::feed::Message) {
-        self.update(|snapshot| {
-            snapshot.feed.packets += 1;
-            let feed = &mut snapshot.feed;
-            match message.packet {
-                Packet::Index { .. } => feed.index_packets += 1,
-                Packet::Ticker { .. } => feed.ticker_packets += 1,
-                Packet::Quote { .. } => feed.quote_packets += 1,
-                Packet::Full(full) => {
-                    feed.full_packets += 1;
-                    if full.best_bid().is_some() && full.best_ask().is_some() {
-                        feed.two_sided_packets += 1;
+
+    pub(crate) fn chain_symbols(&self) -> Vec<String> {
+        self.book
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(ChainBook::symbols))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn apply_frame(&self, bytes: usize, messages: &[crate::dhan_api::feed::Message]) {
+        let mut counts = FrameCounts::default();
+        for message in messages {
+            counts.tally(&message.packet);
+        }
+
+        let stats = {
+            let mut guard = self.book.write().unwrap_or_else(|error| {
+                self.book.clear_poison();
+                error.into_inner()
+            });
+            match guard.as_mut() {
+                Some(book) => {
+                    for message in messages {
+                        book.apply(message);
                     }
+                    Some(book.stats())
                 }
-                Packet::OpenInterest { .. } => feed.oi_packets += 1,
-                Packet::PrevClose { .. } => feed.prev_close_packets += 1,
-                Packet::Unknown { .. } => feed.unknown_packets += 1,
-                Packet::Disconnect { .. } => {}
+                None => None,
+            }
+        };
+
+        let summaries = self.chain_summaries();
+
+        self.update(|snapshot| {
+            let feed = &mut snapshot.feed;
+            feed.frames += 1;
+            feed.bytes += bytes as u64;
+            feed.last_frame_at_ms = Some(now_millis());
+            if messages.is_empty() && bytes > 0 {
+                feed.undecodable_frames += 1;
+            }
+            counts.merge_into(feed);
+            if let Some((applied, unmatched, references)) = stats.clone() {
+                feed.applied = applied;
+                feed.unmatched = unmatched;
+                feed.indices = references;
+            }
+            if !summaries.is_empty() {
+                snapshot.chains = summaries.clone();
             }
         });
     }
+
+    fn chain_summaries(&self) -> Vec<ChainSummaryView> {
+        self.chain_metrics()
+            .iter()
+            .map(|chain| ChainSummaryView {
+                symbol: chain.symbol.clone(),
+                expiry: chain.expiry.clone(),
+                spot_price: chain.spot_price,
+                spot_atm: chain.spot_atm,
+                market_atm: chain.market_atm,
+                max_pain: chain.max_pain,
+                atm_straddle: chain.atm_straddle,
+                pcr_oi: chain.pcr_oi,
+                quoted_strikes: chain.quoted_strikes,
+                strikes: chain.strikes,
+            })
+            .collect()
+    }
 }
 
-pub(crate) fn now_unix() -> i64 {
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameCounts {
+    packets: u64,
+    index: u64,
+    ticker: u64,
+    quote: u64,
+    full: u64,
+    oi: u64,
+    prev_close: u64,
+    unknown: u64,
+    two_sided: u64,
+}
+
+impl FrameCounts {
+    fn tally(&mut self, packet: &Packet) {
+        self.packets += 1;
+        match packet {
+            Packet::Index { .. } => self.index += 1,
+            Packet::Ticker { .. } => self.ticker += 1,
+            Packet::Quote { .. } => self.quote += 1,
+            Packet::Full(full) => {
+                self.full += 1;
+                if full.best_bid().is_some() && full.best_ask().is_some() {
+                    self.two_sided += 1;
+                }
+            }
+            Packet::OpenInterest { .. } => self.oi += 1,
+            Packet::PrevClose { .. } => self.prev_close += 1,
+            Packet::Unknown { .. } => self.unknown += 1,
+            Packet::Disconnect { .. } => {}
+        }
+    }
+
+    fn merge_into(self, feed: &mut FeedView) {
+        feed.packets += self.packets;
+        feed.index_packets += self.index;
+        feed.ticker_packets += self.ticker;
+        feed.quote_packets += self.quote;
+        feed.full_packets += self.full;
+        feed.oi_packets += self.oi;
+        feed.prev_close_packets += self.prev_close;
+        feed.unknown_packets += self.unknown;
+        feed.two_sided_packets += self.two_sided;
+    }
+}
+
+pub(crate) fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
 }

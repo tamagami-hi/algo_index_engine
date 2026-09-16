@@ -38,6 +38,30 @@ pub(crate) struct Quote {
     pub(crate) change: f64,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct SideColumns {
+    pub(crate) ltp: Vec<f64>,
+    pub(crate) bid: Vec<f64>,
+    pub(crate) bid_quantity: Vec<f64>,
+    pub(crate) ask: Vec<f64>,
+    pub(crate) ask_quantity: Vec<f64>,
+    pub(crate) oi: Vec<f64>,
+    pub(crate) change_in_oi: Vec<f64>,
+    pub(crate) volume: Vec<f64>,
+    pub(crate) change: Vec<f64>,
+    pub(crate) quoted: Vec<bool>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ChainColumns {
+    #[serde(flatten)]
+    pub(crate) metrics: ChainMetrics,
+    pub(crate) market_atm_row: Option<usize>,
+    pub(crate) strike: Vec<f64>,
+    pub(crate) call: SideColumns,
+    pub(crate) put: SideColumns,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ChainView {
     #[serde(flatten)]
@@ -125,16 +149,15 @@ impl ChainBook {
         self.tables.len()
     }
 
-    pub(crate) fn applied(&self) -> u64 {
-        self.applied
-    }
-
-    pub(crate) fn unmatched(&self) -> u64 {
-        self.unmatched
-    }
-
-    pub(crate) fn references(&self) -> &HashMap<String, f64> {
-        &self.reference_prices
+    pub(crate) fn stats(&self) -> (u64, u64, std::collections::BTreeMap<String, f64>) {
+        (
+            self.applied,
+            self.unmatched,
+            self.reference_prices
+                .iter()
+                .map(|(label, price)| (label.clone(), *price))
+                .collect(),
+        )
     }
 
     pub(crate) fn metrics(&self) -> Vec<ChainMetrics> {
@@ -164,6 +187,29 @@ impl ChainBook {
             straddles,
             rows,
         })
+    }
+
+    pub(crate) fn columns(&self, symbol: &str) -> Option<ChainColumns> {
+        let table = self
+            .tables
+            .iter()
+            .find(|table| table.underlying.symbol.eq_ignore_ascii_case(symbol))?;
+
+        Some(ChainColumns {
+            metrics: metrics(table),
+            market_atm_row: market_atm_index(table),
+            strike: table.strikes.clone(),
+            call: columns_of(&table.calls),
+            put: columns_of(&table.puts),
+        })
+    }
+
+
+    pub(crate) fn symbols(&self) -> Vec<String> {
+        self.tables
+            .iter()
+            .map(|table| table.underlying.symbol.clone())
+            .collect()
     }
 
     pub(crate) fn apply(&mut self, message: &Message) {
@@ -210,6 +256,21 @@ impl ChainBook {
             apply_packet(block, leg.row, &message.packet);
             self.applied += 1;
         }
+    }
+}
+
+fn columns_of(block: &super::table::Block) -> SideColumns {
+    SideColumns {
+        ltp: block.ltp.clone(),
+        bid: block.bid.clone(),
+        bid_quantity: block.bid_quantity.clone(),
+        ask: block.ask.clone(),
+        ask_quantity: block.ask_quantity.clone(),
+        oi: block.oi.clone(),
+        change_in_oi: block.change_in_oi.clone(),
+        volume: block.volume.clone(),
+        change: block.change.clone(),
+        quoted: (0..block.ltp.len()).map(|row| block.is_quoted(row)).collect(),
     }
 }
 

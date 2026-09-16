@@ -92,22 +92,16 @@ pub(crate) async fn ws_dhan_connection(
 
         match message.context("Failed to read Dhan WebSocket message")? {
             Message::Binary(data) => {
-                state.feed_frame(data.len());
                 let messages = decode_frame(&data);
-                if messages.is_empty() && !data.is_empty() {
-                    state.feed_undecodable(data.len());
-                    continue;
-                }
                 for message in &messages {
                     if let Packet::Disconnect { reason } = message.packet {
                         println!("Dhan feed sent disconnect reason {reason}");
                     }
-                    state.feed_packet(message);
-                    state.apply_feed(message);
                 }
+                state.apply_frame(data.len(), &messages);
             }
             Message::Text(text) => {
-                state.feed_frame(text.len());
+                state.apply_frame(text.len(), &[]);
                 println!("Dhan text message: {text}");
             }
             Message::Ping(data) => {

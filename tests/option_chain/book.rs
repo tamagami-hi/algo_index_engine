@@ -112,8 +112,8 @@ fn a_full_packet_lands_on_the_right_chain_side_and_strike() {
     assert_eq!(put.ltp, 0.0, "the put leg was never quoted");
 
     assert_eq!(view.rows[0].call.unwrap().ltp, 0.0);
-    assert_eq!(book.applied(), 1);
-    assert_eq!(book.unmatched(), 0);
+    assert_eq!(book.stats().0, 1);
+    assert_eq!(book.stats().1, 0);
 }
 
 #[test]
@@ -132,9 +132,9 @@ fn a_spot_packet_sets_the_chain_spot_and_a_reference_index_is_tracked_separately
         "25063 rounds down on a 50-point chain"
     );
 
-    assert_eq!(book.references().get("INDIA VIX").copied(), Some(11.85_f32 as f64));
+    assert_eq!(book.stats().2.get("INDIA VIX").copied(), Some(11.85_f32 as f64));
     assert_eq!(
-        book.references().get("NIFTY").copied(),
+        book.stats().2.get("NIFTY").copied(),
         Some(25_063.4_f32 as f64),
         "the chain spot is also a labelled reference"
     );
@@ -147,8 +147,8 @@ fn an_unknown_security_is_counted_as_unmatched_rather_than_misapplied() {
 
     book.apply(&full_message(999_999, 1.0, 1.0, 2.0, 1));
 
-    assert_eq!(book.applied(), 0);
-    assert_eq!(book.unmatched(), 1);
+    assert_eq!(book.stats().0, 0);
+    assert_eq!(book.stats().1, 1);
     let view = book.view("NIFTY").unwrap();
     assert!(view.rows.iter().all(|row| row.call.unwrap().ltp == 0.0));
 }

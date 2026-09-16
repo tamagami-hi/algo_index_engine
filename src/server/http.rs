@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, header},
     response::{
         IntoResponse, Response,
@@ -15,7 +15,22 @@ use axum::{
 use futures_util::stream::{self, Stream};
 use tokio_util::sync::CancellationToken;
 
-use crate::server::state::EngineState;
+use serde::{Deserialize, Serialize};
+
+use crate::option_chain::book::ChainColumns;
+use crate::server::state::{EngineState, Snapshot};
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct StreamParams {
+    chain: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct StreamFrame {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain: Option<ChainColumns>,
+    state: Snapshot,
+}
 
 const DEFAULT_ADDR: &str = "0.0.0.0:8081";
 const ADDR_VARIABLE: &str = "BLACKBOX_HTTP_ADDR";
@@ -44,6 +59,8 @@ pub(crate) async fn serve(
         .route("/api/stream", get(api_stream))
         .route("/api/chains", get(api_chains))
         .route("/api/chain/{symbol}", get(api_chain))
+        .route("/api/chain/{symbol}/columns", get(api_chain_columns))
+        .route("/api/symbols", get(api_symbols))
         .with_state(Http {
             engine,
             shutdown: shutdown.clone(),
@@ -104,6 +121,24 @@ async fn api_chains(State(http): State<Http>) -> Response {
     json(StatusCode::OK, body)
 }
 
+async fn api_symbols(State(http): State<Http>) -> Response {
+    let body = serde_json::to_string(&http.engine.chain_symbols()).unwrap_or_else(|_| "[]".to_owned());
+    json(StatusCode::OK, body)
+}
+
+async fn api_chain_columns(State(http): State<Http>, Path(symbol): Path<String>) -> Response {
+    match http.engine.chain_columns(&symbol) {
+        Some(columns) => {
+            let body = serde_json::to_string(&columns).unwrap_or_else(|_| "{}".to_owned());
+            json(StatusCode::OK, body)
+        }
+        None => json(
+            StatusCode::NOT_FOUND,
+            format!("{{\"error\":\"no chain for {symbol}\"}}"),
+        ),
+    }
+}
+
 async fn api_chain(State(http): State<Http>, Path(symbol): Path<String>) -> Response {
     match http.engine.chain_view(&symbol) {
         Some(view) => {
@@ -119,12 +154,17 @@ async fn api_chain(State(http): State<Http>, Path(symbol): Path<String>) -> Resp
 
 async fn api_stream(
     State(http): State<Http>,
+    Query(params): Query<StreamParams>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let receiver = http.engine.subscribe();
     let shutdown = http.shutdown;
+    let engine = http.engine;
+    let chain = params.chain;
 
     let stream = stream::unfold((receiver, true), move |(mut receiver, first)| {
         let shutdown = shutdown.clone();
+        let engine = engine.clone();
+        let chain = chain.clone();
         async move {
             if !first {
                 tokio::select! {
@@ -133,10 +173,16 @@ async fn api_stream(
                 }
             }
             let mut snapshot = receiver.borrow_and_update().clone();
-            snapshot.uptime_seconds = crate::server::state::now_unix() - snapshot.started_at;
-            let payload = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_owned());
+            snapshot.uptime_seconds =
+                (crate::server::state::now_millis() - snapshot.started_at_ms) / 1_000;
+
+            let payload = StreamFrame {
+                chain: chain.as_deref().and_then(|symbol| engine.chain_columns(symbol)),
+                state: snapshot,
+            };
+            let encoded = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_owned());
             Some((
-                Ok::<Event, Infallible>(Event::default().data(payload)),
+                Ok::<Event, Infallible>(Event::default().data(encoded)),
                 (receiver, false),
             ))
         }
@@ -144,3 +190,5 @@ async fn api_stream(
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
+
+
