@@ -2,59 +2,125 @@ pub(crate) mod engine;
 pub(crate) mod http;
 pub(crate) mod report;
 pub(crate) mod state;
+pub(crate) mod supervisor;
 
-use anyhow::{Context, Result};
+use anyhow::{Result, bail};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) use state::EngineState;
 
 use state::Phase;
+use supervisor::{Stop, Supervisor, wait_for_stop};
+
+const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(crate) async fn run() -> Result<()> {
     let engine = EngineState::new();
     let addr = http::listen_addr()?;
     let shutdown = CancellationToken::new();
 
-    let serving = tokio::spawn({
-        let engine = engine.clone();
-        let shutdown = shutdown.clone();
-        async move {
-            let served = http::serve(engine, addr, shutdown.clone()).await;
-            shutdown.cancel();
-            served
-        }
-    });
-
-    let running = tokio::spawn({
-        let engine = engine.clone();
-        let shutdown = shutdown.clone();
-        async move {
-            let ran = engine::run(engine, shutdown.clone()).await;
-            shutdown.cancel();
-            ran
-        }
-    });
-
-    let mut terminate =
-        signal(SignalKind::terminate()).context("cannot install the SIGTERM handler")?;
-
-    tokio::select! {
-        () = shutdown.cancelled() => {}
-        _ = tokio::signal::ctrl_c() => begin_shutdown(&engine, &shutdown, "SIGINT"),
-        _ = terminate.recv() => begin_shutdown(&engine, &shutdown, "SIGTERM"),
+    if let Err(error) = crate::risk_engine::store::migrate() {
+        tracing::warn!(error = %format!("{error:#}"), "could not migrate the strategy store");
     }
 
-    let served = serving.await.context("the HTTP server task panicked")?;
-    let ran = running.await.context("the engine task panicked")?;
+    let mut supervisor = Supervisor::new();
 
-    served.context("HTTP server stopped")?;
-    ran.context("engine loop stopped")?;
-    Ok(())
+    supervisor.spawn("http server", {
+        let engine = engine.clone();
+        let shutdown = shutdown.clone();
+        async move { http::serve(engine, addr, shutdown).await }
+    });
+
+    supervisor.spawn("engine loop", {
+        let engine = engine.clone();
+        let shutdown = shutdown.clone();
+        async move { engine::run(engine, shutdown).await }
+    });
+
+    let stop = wait_for_stop(&mut supervisor, unix_signal()).await;
+
+    let fault = match &stop {
+        Stop::Signal(cause) => {
+            tracing::info!(cause = %cause, "shutting down");
+            engine.set_phase(Phase::ShuttingDown, format!("{cause} received"));
+            None
+        }
+        Stop::Task { name, ended } if ended.is_fault() => {
+            tracing::error!(
+                task = %name,
+                detail = %ended.detail(),
+                "a critical task ended; taking the service down"
+            );
+            engine.set_phase(Phase::Failed, format!("{name} {}", ended.detail()));
+            Some(format!("{name} {}", ended.detail()))
+        }
+        Stop::Task { name, ended } => {
+            tracing::error!(
+                task = %name,
+                detail = %ended.detail(),
+                "a critical task exited on its own; taking the service down"
+            );
+            engine.set_phase(Phase::Failed, format!("{name} {}", ended.detail()));
+            Some(format!("{name} {}", ended.detail()))
+        }
+        Stop::Drained => {
+            engine.set_phase(Phase::Failed, "every task exited".to_owned());
+            Some("every critical task exited".to_owned())
+        }
+    };
+
+    shutdown.cancel();
+
+    for (name, ended) in supervisor.drain_within(DRAIN_GRACE).await {
+        if ended.is_fault() {
+            tracing::error!(task = %name, detail = %ended.detail(), "task ended badly during shutdown");
+        } else {
+            tracing::info!(task = %name, "task stopped");
+        }
+    }
+
+    match fault {
+        Some(detail) => bail!("{detail}"),
+        None => Ok(()),
+    }
 }
 
-fn begin_shutdown(engine: &EngineState, shutdown: &CancellationToken, cause: &str) {
-    println!("{cause} received, shutting down");
-    engine.set_phase(Phase::ShuttingDown, format!("{cause} received"));
-    shutdown.cancel();
+async fn unix_signal() -> String {
+    let mut terminate = match signal(SignalKind::terminate()) {
+        Ok(stream) => stream,
+        Err(error) => {
+            tracing::error!(error = %error, "cannot install the SIGTERM handler");
+            return std::future::pending().await;
+        }
+    };
+
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(error) = result {
+                tracing::error!(error = %error, "cannot listen for SIGINT");
+                return std::future::pending().await;
+            }
+            "SIGINT".to_owned()
+        }
+        _ = terminate.recv() => "SIGTERM".to_owned(),
+    }
+}
+
+pub(crate) fn install_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+
+    let filter = EnvFilter::try_from_env("BLACKBOX_LOG")
+        .or_else(|_| EnvFilter::try_from_default_env())
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let installed = fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_ansi(false)
+        .try_init();
+
+    if let Err(error) = installed {
+        eprintln!("could not install the log subscriber: {error}");
+    }
 }

@@ -222,3 +222,175 @@ fn concurrent_writes_leave_one_coherent_file_and_no_temp_droppings() {
         .count();
     assert_eq!(strays, 0, "no temp files may be left behind");
 }
+
+#[test]
+fn a_strategy_named_active_cannot_overwrite_the_activation_set() {
+    let sandbox = Sandbox::new();
+
+    save(&strategy("keeper", "NIFTY")).expect("save keeper");
+    activate("keeper").expect("activate keeper");
+    assert!(active().contains("keeper"));
+
+    save(&strategy("active", "BANKNIFTY")).expect("a strategy may legitimately be called active");
+    activate("active").expect("activate active");
+
+    let armed = active();
+    assert!(
+        armed.contains("keeper") && armed.contains("active"),
+        "saving a strategy called active must not have clobbered the activation set: {armed:?}"
+    );
+
+    let reloaded = load("active").expect("the strategy called active is still a strategy");
+    assert_eq!(reloaded.underlying, "BANKNIFTY");
+
+    let definitions = sandbox._directory.path().join("data/strategies");
+    let state = sandbox._directory.path().join("data/state");
+    assert!(
+        definitions.join("active.json").exists(),
+        "the strategy lives under the definitions directory"
+    );
+    assert!(
+        state.join("active.json").exists(),
+        "the activation set lives under the state directory"
+    );
+}
+
+#[test]
+fn an_id_that_would_escape_the_store_is_refused_by_every_operation() {
+    let _sandbox = Sandbox::new();
+
+    save(&strategy("victim", "NIFTY")).expect("save");
+
+    let escapes = [
+        "../victim",
+        "../../victim",
+        "..",
+        ".",
+        "a/b",
+        "a\\b",
+        "/etc/passwd",
+        "C:\\windows",
+        "with space",
+        "dot.dot",
+        "new\nline",
+        "null\0byte",
+        "",
+    ];
+
+    for bad in escapes {
+        assert!(
+            load(bad).is_err(),
+            "load must refuse {bad:?} rather than reading an arbitrary path"
+        );
+        assert!(
+            remove(bad).is_err(),
+            "remove must refuse {bad:?} rather than unlinking an arbitrary path"
+        );
+        assert!(activate(bad).is_err(), "activate must refuse {bad:?}");
+        assert!(deactivate(bad).is_err(), "deactivate must refuse {bad:?}");
+
+        let mut forged = strategy("placeholder", "NIFTY");
+        forged.id = bad.to_owned();
+        assert!(save(&forged).is_err(), "save must refuse {bad:?}");
+    }
+
+    assert!(
+        load("victim").is_ok(),
+        "the refusals must not have damaged a real strategy"
+    );
+}
+
+#[test]
+fn an_over_long_id_is_refused_before_it_reaches_the_filesystem() {
+    let _sandbox = Sandbox::new();
+
+    let long = "a".repeat(crate::risk_engine::strategy::MAX_ID_BYTES + 1);
+    let mut oversized = strategy("placeholder", "NIFTY");
+    oversized.id = long.clone();
+    assert!(save(&oversized).is_err());
+    assert!(load(&long).is_err());
+
+    let at_limit = "b".repeat(crate::risk_engine::strategy::MAX_ID_BYTES);
+    let mut allowed = strategy("placeholder", "NIFTY");
+    allowed.id = at_limit.clone();
+    assert!(
+        save(&allowed).is_ok(),
+        "the limit itself is still a usable id"
+    );
+    assert!(load(&at_limit).is_ok());
+}
+
+#[test]
+fn the_activation_set_migrates_out_of_the_strategy_directory_once_and_idempotently() {
+    let sandbox = Sandbox::new();
+    let root = sandbox._directory.path();
+    let definitions = root.join("data/strategies");
+    let state = root.join("data/state");
+
+    std::fs::create_dir_all(&definitions).expect("mkdir");
+    std::fs::write(
+        definitions.join("active.json"),
+        "[\n  \"legacy-one\",\n  \"legacy-two\"\n]",
+    )
+    .expect("seed the legacy activation file");
+
+    migrate().expect("first migration");
+
+    assert!(
+        !definitions.join("active.json").exists(),
+        "the legacy file is moved, not copied"
+    );
+    assert!(state.join("active.json").exists());
+    let armed = active();
+    assert!(
+        armed.contains("legacy-one") && armed.contains("legacy-two"),
+        "the activation set survived the move: {armed:?}"
+    );
+
+    migrate().expect("second migration");
+    let again = active();
+    assert_eq!(armed, again, "migration is idempotent");
+}
+
+#[test]
+fn migration_leaves_a_real_strategy_called_active_alone() {
+    let sandbox = Sandbox::new();
+
+    save(&strategy("active", "SENSEX")).expect("save a strategy called active");
+    migrate().expect("migrate");
+
+    let definitions = sandbox._directory.path().join("data/strategies");
+    assert!(
+        definitions.join("active.json").exists(),
+        "a strategy file must not be mistaken for the activation set and moved"
+    );
+    let kept = load("active").expect("still loadable");
+    assert_eq!(kept.underlying, "SENSEX");
+    assert!(
+        active().is_empty(),
+        "no activation set existed, so none was invented"
+    );
+}
+
+#[test]
+fn existing_valid_strategies_remain_readable_after_the_layout_change() {
+    let sandbox = Sandbox::new();
+    let definitions = sandbox._directory.path().join("data/strategies");
+    std::fs::create_dir_all(&definitions).expect("mkdir");
+
+    let existing = strategy("pre-existing", "FINNIFTY");
+    let body = serde_json::to_string_pretty(&existing).expect("encode");
+    std::fs::write(definitions.join("pre-existing.json"), body).expect("seed");
+
+    migrate().expect("migrate");
+
+    let loaded = load("pre-existing").expect("a strategy written by the old layout still loads");
+    assert_eq!(loaded.underlying, "FINNIFTY");
+    assert!(
+        list()
+            .strategies
+            .iter()
+            .any(|item| item.id == "pre-existing"),
+        "and it still lists"
+    );
+}

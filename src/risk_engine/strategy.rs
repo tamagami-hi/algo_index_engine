@@ -313,16 +313,22 @@ pub(crate) enum StrategyError {
     },
 }
 
+pub(crate) const MAX_ID_BYTES: usize = 64;
+
+pub(crate) fn is_safe_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ID_BYTES
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 impl Strategy {
     pub(crate) fn validate(&self) -> Result<(), StrategyError> {
         if self.id.trim().is_empty() {
             return Err(StrategyError::BlankId);
         }
-        if !self
-            .id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-        {
+        if !is_safe_id(&self.id) {
             return Err(StrategyError::IdNotSlug {
                 id: self.id.clone(),
             });

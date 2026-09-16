@@ -13,7 +13,7 @@ serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 time = { version = "0.3.55", features = ["parsing", "macros"] }
 tempfile = "3.27"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
@@ -29,11 +29,7 @@ codegen-units = 1
 strip = "symbols"
 debug = false
 incremental = false
-# Money and strike arithmetic must never wrap silently. A wrapped strike or
-# quantity is a wrong order; a panic is caught by the task supervisor and retried.
 overflow-checks = true
-# Left as unwind on purpose: server::run awaits both task handles and reports a
-# panic as "task panicked". abort would kill the process and lose that.
 panic = "unwind"
 
 [profile.release.package."*"]

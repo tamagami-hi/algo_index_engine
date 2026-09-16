@@ -126,18 +126,90 @@ fn encode(state: &EngineState) -> String {
     serde_json::to_string(&state.snapshot()).unwrap_or_else(|_| "{}".to_owned())
 }
 
+#[derive(Debug, Serialize)]
+struct Liveness {
+    alive: bool,
+    version: &'static str,
+    phase: &'static str,
+    uptime_seconds: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct Readiness {
+    ready: bool,
+    phase: &'static str,
+    detail: String,
+    reasons: Vec<&'static str>,
+    catalog_loaded: bool,
+    chains: usize,
+    feed_connected: bool,
+    last_frame_age_ms: Option<u64>,
+}
+
 async fn health(State(http): State<Http>) -> Response {
-    json(StatusCode::OK, encode(&http.engine))
+    let snapshot = http.engine.snapshot();
+    encoded(
+        StatusCode::OK,
+        &Liveness {
+            alive: true,
+            version: snapshot.version,
+            phase: snapshot.phase_label,
+            uptime_seconds: snapshot.uptime_seconds,
+        },
+    )
 }
 
 async fn ready(State(http): State<Http>) -> Response {
     let snapshot = http.engine.snapshot();
-    let status = if snapshot.phase.is_healthy() {
+    let mut reasons = Vec::new();
+
+    if snapshot.phase == crate::server::state::Phase::Failed {
+        reasons.push("a critical task has stopped");
+    }
+    if !snapshot.phase.is_healthy() {
+        reasons.push("the engine is not in a ready phase");
+    }
+    if snapshot.catalog.is_none() {
+        reasons.push("no instrument universe is loaded");
+    }
+    if snapshot.feed.chains == 0 {
+        reasons.push("no option chains are assembled");
+    }
+    if !snapshot.feed.connected {
+        reasons.push("the market feed is not connected");
+    }
+
+    let last_frame_age_ms = snapshot
+        .feed
+        .last_frame_at
+        .map(crate::option_chain::quality::age_since);
+    let silence_limit = crate::option_chain::quality::freshness().feed_silence_max_ms;
+    match last_frame_age_ms {
+        None if snapshot.feed.connected => reasons.push("no market data has arrived yet"),
+        Some(age) if age > silence_limit => reasons.push("the market feed has gone silent"),
+        _ => {}
+    }
+
+    let ready = reasons.is_empty();
+    let status = if ready {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    json(status, encode(&http.engine))
+
+    encoded(
+        status,
+        &Readiness {
+            ready,
+            phase: snapshot.phase_label,
+            detail: snapshot.detail.clone(),
+            reasons,
+            catalog_loaded: snapshot.catalog.is_some(),
+            chains: snapshot.feed.chains,
+            feed_connected: snapshot.feed.connected,
+            last_frame_age_ms,
+        },
+    )
 }
 
 async fn api_state(State(http): State<Http>) -> Response {

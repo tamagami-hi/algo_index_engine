@@ -24,6 +24,7 @@ pub(crate) enum Phase {
     FeedConnected,
     FeedDisconnected,
     ShuttingDown,
+    Failed,
 }
 
 impl Phase {
@@ -38,6 +39,7 @@ impl Phase {
             Self::FeedConnected => "feed connected",
             Self::FeedDisconnected => "feed disconnected",
             Self::ShuttingDown => "shutting down",
+            Self::Failed => "failed",
         }
     }
 

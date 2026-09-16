@@ -13,6 +13,7 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[tokio::main]
 async fn main() -> Result<()> {
     config::load_env()?;
+    server::install_tracing();
 
     if std::env::args().nth(1).as_deref() == Some("--dhan-login") {
         dhan_api::dhan_oauth::login().await?;

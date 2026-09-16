@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, bail};
 
-use super::strategy::Strategy;
+use super::strategy::{MAX_ID_BYTES, Strategy, is_safe_id};
 
 static STORE: Mutex<()> = Mutex::new(());
 
@@ -16,18 +16,62 @@ fn guard() -> MutexGuard<'static, ()> {
 }
 
 const STRATEGY_DIRECTORY: &str = "data/strategies";
-const ACTIVE_FILE: &str = "data/strategies/active.json";
+const STATE_DIRECTORY: &str = "data/state";
+const ACTIVE_NAME: &str = "active.json";
 
 fn directory() -> PathBuf {
     crate::config::data_path(STRATEGY_DIRECTORY)
 }
 
-fn active_path() -> PathBuf {
-    crate::config::data_path(ACTIVE_FILE)
+fn state_directory() -> PathBuf {
+    crate::config::data_path(STATE_DIRECTORY)
 }
 
-fn definition_path(id: &str) -> PathBuf {
-    directory().join(format!("{id}.json"))
+fn active_path() -> PathBuf {
+    state_directory().join(ACTIVE_NAME)
+}
+
+fn legacy_active_path() -> PathBuf {
+    directory().join(ACTIVE_NAME)
+}
+
+fn checked_id(id: &str) -> Result<&str> {
+    if is_safe_id(id) {
+        return Ok(id);
+    }
+    bail!(
+        "{id:?} is not a usable strategy id: up to {MAX_ID_BYTES} characters of letters, digits, dashes and underscores"
+    );
+}
+
+fn definition_path(id: &str) -> Result<PathBuf> {
+    Ok(directory().join(format!("{}.json", checked_id(id)?)))
+}
+
+pub(crate) fn migrate() -> Result<()> {
+    let _lock = guard();
+    let legacy = legacy_active_path();
+    let target = active_path();
+
+    if !legacy.exists() || target.exists() {
+        return Ok(());
+    }
+
+    let body = std::fs::read_to_string(&legacy)
+        .with_context(|| format!("cannot read {}", legacy.display()))?;
+
+    if serde_json::from_str::<BTreeSet<String>>(&body).is_err() {
+        return Ok(());
+    }
+
+    write_atomically(&target, &body)?;
+    std::fs::remove_file(&legacy).with_context(|| format!("cannot remove {}", legacy.display()))?;
+    tracing::info!(
+        from = %legacy.display(),
+        to = %target.display(),
+        "moved the activation set out of the strategy directory"
+    );
+    Ok(())
 }
 
 fn write_atomically(path: &Path, body: &str) -> Result<()> {
@@ -63,12 +107,13 @@ pub(crate) fn save(strategy: &Strategy) -> Result<()> {
             serde_json::to_string(&problem)?
         );
     }
+    let path = definition_path(&strategy.id)?;
     let body = serde_json::to_string_pretty(strategy).context("cannot encode strategy")?;
-    write_atomically(&definition_path(&strategy.id), &body)
+    write_atomically(&path, &body)
 }
 
 pub(crate) fn load(id: &str) -> Result<Strategy> {
-    let path = definition_path(id);
+    let path = definition_path(id)?;
     let body = std::fs::read_to_string(&path)
         .with_context(|| format!("no saved strategy at {}", path.display()))?;
     serde_json::from_str(&body).with_context(|| format!("cannot parse {}", path.display()))
@@ -95,9 +140,6 @@ pub(crate) fn list() -> Listing {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        if path.file_name().is_some_and(|name| name == "active.json") {
             continue;
         }
         let name = path
@@ -129,7 +171,7 @@ pub(crate) fn list() -> Listing {
 
 pub(crate) fn remove(id: &str) -> Result<()> {
     let _lock = guard();
-    let path = definition_path(id);
+    let path = definition_path(id)?;
     std::fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
     let mut ids = read_active();
     if ids.remove(id) {
@@ -157,18 +199,22 @@ pub(crate) fn active() -> BTreeSet<String> {
 
 pub(crate) fn activate(id: &str) -> Result<BTreeSet<String>> {
     let _lock = guard();
+    let id = checked_id(id)?;
     load(id).with_context(|| format!("cannot activate unknown strategy {id}"))?;
     let mut ids = read_active();
     ids.insert(id.to_owned());
     write_active(&ids)?;
+    tracing::info!(strategy = id, "strategy activated");
     Ok(ids)
 }
 
 pub(crate) fn deactivate(id: &str) -> Result<BTreeSet<String>> {
     let _lock = guard();
+    let id = checked_id(id)?;
     let mut ids = read_active();
     ids.remove(id);
     write_active(&ids)?;
+    tracing::info!(strategy = id, "strategy deactivated");
     Ok(ids)
 }
 
