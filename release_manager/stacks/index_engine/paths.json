@@ -50,11 +50,11 @@
   },
   "nginx": {
     "enabled": false,
+    "staging_dir": "/srv/dev_stack/ALGO_INDEX_ENGINE/nginx",
     "vhost_file": "/etc/nginx/sites-enabled/algo-index-engine",
-    "internal_domain": "engine.boe.app.internal",
-    "magicdns_origin": "https://beonedge-vps.tail4ea2bc.ts.net",
-    "location_prefix": "/engine/",
-    "note": "Access control is the tailnet: the vhost must carry allow 100.64.0.0/10 and deny all, which the deploy asserts when enabled is true. Configs to install live in release_manager/nginx/. While this stays false the engine is reachable only on VPS loopback and the UI needs an SSH tunnel."
+    "internal_domain": "index.algo.boe.internal",
+    "tailnet_address": "100.122.85.101",
+    "note": "Access control is the tailnet: the vhost must carry allow 100.64.0.0/10 and deny all, and must proxy to the port the env file publishes. All three are asserted on every deploy once enabled is true. The release manager stages release_manager/nginx/ into staging_dir and prints the install commands; it never writes to /etc/nginx. While enabled is false the engine is reachable only on VPS loopback and the UI needs an SSH tunnel."
   },
   "web": {
     "enabled": false,

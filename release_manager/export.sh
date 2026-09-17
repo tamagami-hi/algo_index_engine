@@ -30,6 +30,8 @@ source "$RM_DIR/lib/ui.sh"
 source "$RM_DIR/lib/version.sh"
 # shellcheck source=lib/stacks.sh
 source "$RM_DIR/lib/stacks.sh"
+# shellcheck source=lib/nginx_ship.sh
+source "$RM_DIR/lib/nginx_ship.sh"
 # shellcheck source=lib/paths.sh
 source "$RM_DIR/lib/paths.sh"
 
@@ -209,6 +211,11 @@ if [[ "$(jq -r '.web.enabled // false' "$PATHS_FILE")" == "true" ]]; then
     ok "staged Caddyfile and $(find "$BUNDLE/web" -type f | wc -l) web file(s)"
 fi
 
+# The nginx vhost travels with the release so the box cannot drift from the repo.
+# It lands outside the stack directory on the VPS, so it is deliberately excluded
+# from checksums.sha256 below and proven separately by nginx_ship_verify.
+nginx_ship_stage "$BUNDLE"
+
 # paths.json is the hand-edited canonical contract: the sole authority for every
 # path this bundle will use. Copied byte for byte — never generated here.
 cp "$PATHS_FILE" "$BUNDLE/paths.json"
@@ -255,7 +262,8 @@ jq empty "$BUNDLE/manifest.json" || { err "generated an invalid manifest"; exit 
 # A flat checksum list too, so sha256sum -c works on the VPS without jq. Every
 # path must resolve relative to the stack directory, because both verifiers run
 # `cd <stack_dir> && sha256sum -c checksums.sha256`.
-( cd "$BUNDLE" && find . -type f ! -name 'checksums.sha256' -print0 \
+( cd "$BUNDLE" && find . -type f ! -name 'checksums.sha256' \
+    ! -path './nginx/*' -print0 \
     | sort -z | xargs -0 -r sha256sum > checksums.sha256 )
 
 BUNDLE_COMPLETE=true

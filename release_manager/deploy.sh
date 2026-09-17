@@ -42,6 +42,8 @@ source "$RM_DIR/lib/version.sh"
 source "$RM_DIR/lib/stacks.sh"
 # shellcheck source=lib/paths.sh
 source "$RM_DIR/lib/paths.sh"
+# shellcheck source=lib/nginx_ship.sh
+source "$RM_DIR/lib/nginx_ship.sh"
 
 STACK=''
 BUNDLE_ARG=''
@@ -348,6 +350,23 @@ if [[ -d "$BUNDLE/web" ]]; then
         || { err "failed to upload web content"; exit 1; }
 fi
 
+# The vhost lands outside the stack directory, at the staging folder the contract
+# names, because /etc/nginx is shared with sites this pipeline does not own. It is
+# staged here and installed by hand; nothing below touches a live nginx.
+if compgen -G "$BUNDLE/nginx/*.conf" >/dev/null; then
+    NGINX_REMOTE_DIR="$(nginx_ship_remote_dir "$PATHS_FILE")" \
+        || { err "cannot resolve the nginx staging directory from paths.json"; exit 1; }
+    assert_safe_remote_dir "$NGINX_REMOTE_DIR" \
+        || { err "unsafe nginx staging path: $NGINX_REMOTE_DIR"; exit 1; }
+    step "uploading nginx configs ($(find "$BUNDLE/nginx" -name '*.conf' | wc -l) file(s))"
+    bb_ssh "mkdir -p ${NGINX_REMOTE_DIR@Q}" \
+        || { err "cannot create $NGINX_REMOTE_DIR"; exit 1; }
+    rsync "${RSYNC_OPTS[@]}" -e "$RSYNC_SSH" \
+        "$BUNDLE/nginx/" "${BB_SSH_ALIAS}:${NGINX_REMOTE_DIR}/" \
+        || { err "failed to upload nginx configs"; exit 1; }
+    nginx_ship_verify "$BUNDLE/nginx" "$NGINX_REMOTE_DIR" || exit 1
+fi
+
 step "uploading VPS-native scripts"
 rsync -az --checksum --chmod=F755,D755 -e "$RSYNC_SSH" \
     "$BUNDLE/$DEPLOY_NAME" "$BUNDLE/$ROLLBACK_NAME" \
@@ -431,3 +450,9 @@ field "stack"   "$STACK"
 field "version" "$VERSION"
 field "status"  "${STATUS:-active}"
 printf '\n'
+
+# Last, so it is the final thing on screen: the engine is running, and this is the
+# one remaining manual step before it can be reached by hostname.
+if [[ -n "${NGINX_REMOTE_DIR:-}" ]]; then
+    nginx_ship_guide "$NGINX_REMOTE_DIR" "$PATHS_FILE"
+fi

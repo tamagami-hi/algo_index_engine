@@ -77,11 +77,22 @@ and fail to write.
 
 `release_manager/` holds the deployment pipeline. See `release_manager/README.md`.
 
+`./release_manager/status.sh` with no arguments is the control centre: it prints
+what is built here, what is live there and whether they agree, then offers every
+operation from one menu — build, ship, deploy, reload, roll back, ship the nginx
+vhost, tail deploy logs, inspect containers, ask the engine its readiness,
+diagnose the VPS, and run the offline suites. Opening it changes nothing, and
+every action that restarts the engine says so before asking. The individual
+scripts remain the entry points and keep working on their own:
+
 ```sh
+./release_manager/status.sh               # interactive control centre
+./release_manager/status.sh --status      # dashboard only, read-only
+./release_manager/status.sh --diagnose    # VPS tooling, paths, permissions
+./release_manager/status.sh --verify      # offline suites
 ./release_manager/provision.sh --engine   # once per host
 ./release_manager/export.sh    --engine   # build + stage a bundle
 ./release_manager/deploy.sh    --engine   # upload + deploy
-./release_manager/status.sh    --engine   # local vs live
 ./release_manager/rollback.sh  --engine --list
 ```
 
@@ -118,6 +129,22 @@ that port in the SSH tunnel. If nginx is enabled, update both upstreams in its
 location configuration to match: nginx cannot read the env file, so it is the one
 place the number appears twice, and every deploy resolves the port Compose
 publishes and refuses to continue if a `proxy_pass` names a different one.
+
+### The hostname
+
+`release_manager/nginx/` holds the vhost that serves the engine at
+`index.algo.boe.internal`. A deploy stages it to
+`/srv/dev_stack/ALGO_INDEX_ENGINE/nginx` and prints exactly what `/etc/nginx`
+still needs; it installs nothing itself, because that needs root and a bad file
+there takes down every site on the box at once. `./release_manager/status.sh` →
+Edge ships it on its own, which is worth doing when the vhost is the only change.
+
+`.internal` is ICANN-reserved, so nothing resolves it and no public CA will
+certify it. Each machine needs a hosts entry — `127.0.0.1` on the VPS, the VPS's
+tailnet address on anything you browse from — and the site is plain HTTP with the
+tailnet as its access control. That is acceptable here only because the surface
+has no login form and no password to intercept; it is not open, and the
+`allow 100.64.0.0/10` / `deny all` guard is asserted on every deploy.
 
 For frontend development, `cd web && npm run dev` serves the interface on `5178`
 and proxies `/api`, `/health` and `/ready` to the engine. It reads

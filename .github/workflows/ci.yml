@@ -142,6 +142,9 @@ jobs:
       - name: an open control surface is refused
         run: bash release_manager/tests/access_control.sh
 
+      - name: the nginx vhost is shipped, routed and matches the env port
+        run: bash release_manager/tests/nginx_ship.sh
+
       - name: env-driven port contract
         run: bash release_manager/tests/port_configuration.sh
 
