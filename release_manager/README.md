@@ -83,9 +83,9 @@ hostname is assigned, and the deployed compose file runs the engine alone.
 
 This host already serves BOE_APP from nginx on 80/443, so a Caddy container here
 would fail to bind and break every deploy. The engine instead publishes its HTTP
-port on loopback only. The VPS env example sets `BLACKBOX_HTTP_PORT=47601`; the
-operator-owned env file controls the host and container port, matching the convention the other stacks
-on this box follow. If this engine is ever given a hostname, proxy that port from
+port on loopback only. The env example sets `BLACKBOX_HTTP_PORT=8787`, the same
+port used locally; the operator-owned env file controls the host and container port.
+If this engine is ever given a hostname, proxy that port from
 the existing host nginx rather than adding a second web server.
 
 `/api/stream` has no authentication, so it must not be exposed publicly as-is.

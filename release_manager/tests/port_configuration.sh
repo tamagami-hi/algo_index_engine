@@ -72,6 +72,32 @@ for variant in local vps; do
     check_rejected "$variant empty port" render_port "$ROOT/$variant/compose.yaml" "$ROOT/$variant/.env"
 done
 
+printf '\nOne port, everywhere\n'
+
+# 8787 is pinned by the Dhan app registration, not chosen per environment. A VPS
+# example on a different port means browser login fails there with a redirect
+# mismatch, which reads as a credential problem rather than a config one. So the
+# two examples and the vhost are compared against each other.
+LOCAL_EXAMPLE_PORT="$(sed -n 's/^BLACKBOX_HTTP_PORT=\([0-9][0-9]*\)$/\1/p' "$REPO/.env.example")"
+VPS_EXAMPLE_PORT="$(sed -n 's/^BLACKBOX_HTTP_PORT=\([0-9][0-9]*\)$/\1/p' \
+    "$REPO/release_manager/stacks/index_engine/.env.example")"
+VHOST_PORT="$(grep -oE 'proxy_pass[[:space:]]+http://127\.0\.0\.1:[0-9]+' \
+    "$REPO/release_manager/nginx/index.algo.boe.internal.conf" \
+    | grep -oE '[0-9]+$' | sort -u)"
+
+check_equal 'the local and VPS examples declare the same port' \
+    "$LOCAL_EXAMPLE_PORT" "$VPS_EXAMPLE_PORT"
+check_equal 'the nginx vhost proxies to that same port' \
+    "$LOCAL_EXAMPLE_PORT" "$VHOST_PORT"
+check_equal 'that port is 8787, which the Dhan callback registration pins' \
+    '8787' "$LOCAL_EXAMPLE_PORT"
+check_equal 'no tracked doc, example or vhost still names the retired port' '' \
+    "$(grep -rl '47601' \
+        "$REPO/README.md" "$REPO/.env.example" \
+        "$REPO/release_manager/README.md" \
+        "$REPO/release_manager/nginx" \
+        "$REPO/release_manager/stacks" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+
 printf '\nThe order postback URL comes from the same one port\n'
 render_postback() {
     local file="$1" env_file="$2"

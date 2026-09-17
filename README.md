@@ -140,7 +140,7 @@ The engine serves its React interface and HTTP API from the same process. Build 
 interface with `cd web && npm ci && npm run build`; containers include it already.
 Native runs require `BLACKBOX_HTTP_ADDR`; the env example derives it from
 `BLACKBOX_HTTP_PORT`. Docker requires `BLACKBOX_HTTP_PORT` from `.env` for both
-the host and container port (local example `8787`, VPS example `47601`), with
+the host and container port (`8787`, the same everywhere), with
 host publishing bound only to `127.0.0.1`. There are no code or Compose port
 defaults. Compose sets the listener to `0.0.0.0:${BLACKBOX_HTTP_PORT}`; the UI and API use this
 one port. In `web` mode, `/dhan/callback` is served by this same backend listener;
@@ -153,11 +153,12 @@ reference for the operator-owned file at `vps.env_file` in the authoritative
 `paths.json` (currently `/srv/dev_stack/ALGO_INDEX_ENGINE/index_engine/.env`).
 The deployment health probe follows the configured Compose host port. After
 changing it, recreate the container through deployment; no image rebuild is needed.
-With the VPS example port, connect using
-`ssh -N -L 47601:127.0.0.1:47601 beonedge` and open `http://127.0.0.1:47601`.
-For a custom port, set `BLACKBOX_HTTP_PORT` once in the VPS env file, then use
-that port in the SSH tunnel. If nginx is enabled, update both upstreams in its
-location configuration to match: nginx cannot read the env file, so it is the one
+Connect using
+`ssh -N -L 8787:127.0.0.1:8787 beonedge` and open `http://127.0.0.1:8787`.
+`8787` is the port this repository uses locally and on the VPS. It is not a
+per-environment setting: the Dhan app registration pins the callback URL to it, so
+moving it on one side breaks browser login. If nginx is enabled, its `proxy_pass`
+must name the same port: nginx cannot read the env file, so it is the one
 place the number appears twice, and every deploy resolves the port Compose
 publishes and refuses to continue if a `proxy_pass` names a different one.
 
@@ -236,10 +237,10 @@ looking for.
 
 ### Authentication in a container
 
-`web` mode works through the backend's callback route. With the default VPS env,
-keep `ssh -N -L 47601:127.0.0.1:47601 beonedge` running on your browser's machine.
+`web` mode works through the backend's callback route. Keep
+`ssh -N -L 8787:127.0.0.1:8787 beonedge` running on your browser's machine.
 Open the Dhan consent URL printed in the engine logs and complete login within
-five minutes. Your browser redirects to `http://127.0.0.1:47601/dhan/callback`,
+five minutes. Your browser redirects to `http://127.0.0.1:8787/dhan/callback`,
 which the tunnel forwards to the same backend that serves the UI/API. `/health`
 remains available while authentication is pending; `/ready` stays unavailable.
 The engine saves and reuses the resulting session. When a fresh login is needed,
@@ -270,13 +271,11 @@ modes does not discard a token that is still good. A saved token is only reused 
 recorded client ID and API key match `.env`.
 
 Register the expanded `DHAN_REDIRECT_URL` with your Dhan app for `web` mode.
-For the default VPS configuration:
+One URL covers both local runs and the VPS, because both use port 8787:
 
 ```
-http://127.0.0.1:47601/dhan/callback
+http://127.0.0.1:8787/dhan/callback
 ```
-
-The local env example uses `http://127.0.0.1:8787/dhan/callback`.
 The standalone `cargo run -- --dhan-login` command still owns its own temporary
 listener; stop the backend before using it on the same port. For Docker/VPS use
 the running backend's login flow described above.

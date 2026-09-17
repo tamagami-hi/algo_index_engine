@@ -46,8 +46,8 @@ pipeline reads its contents, writes it, changes its mode, or deletes it:
 
 The example uses `DHAN_AUTH_MODE=web`, with the Dhan callback on the backend
 port. Set `DHAN_API_SECRET` and register the expanded `DHAN_REDIRECT_URL` with
-Dhan: by default `http://127.0.0.1:47601/dhan/callback`. Keep
-`ssh -N -L 47601:127.0.0.1:47601 beonedge` open on your browser's machine,
+Dhan: `http://127.0.0.1:8787/dhan/callback`. Keep
+`ssh -N -L 8787:127.0.0.1:8787 beonedge` open on your browser's machine,
 open the Dhan consent URL printed in the container logs, and complete login.
 The saved session is reused until it needs renewal. `token_url` remains an
 alternative for fetching tokens without browser login. No second callback
@@ -92,14 +92,16 @@ docker run --rm -v algo_index_engine_data:/data alpine:3.22 \
 supplies the probe host and port; `health.http_url` supplies the scheme and path
 and is the fallback for contracts without `compose_service`.
 
-Set `BLACKBOX_HTTP_PORT=47601` in the operator-owned file at `vps.env_file` to
-use the default VPS port, or choose another available port. Docker reads this
-file for Compose interpolation as well as container configuration. The engine
-uses the same env port inside the container, and the host binding stays on
-loopback. The API and built UI share that port. Reach the default mapping with
-`ssh -N -L 47601:127.0.0.1:47601 beonedge`, then open `http://127.0.0.1:47601`.
-Replace both port numbers for a custom mapping. If nginx is enabled, update
-both `proxy_pass` upstreams in its location configuration to match.
+Set `BLACKBOX_HTTP_PORT=8787` in the operator-owned file at `vps.env_file`.
+This is the port the repository uses everywhere, locally and here, and it is not
+a per-host choice: the Dhan app registration pins `DHAN_REDIRECT_URL` to it, so a
+different port means browser login fails with a redirect mismatch. Docker reads
+this file for Compose interpolation as well as container configuration. The
+engine uses the same env port inside the container, and the host binding stays on
+loopback. The API and built UI share that port. Reach it with
+`ssh -N -L 8787:127.0.0.1:8787 beonedge`, then open `http://127.0.0.1:8787`.
+The nginx vhost proxies to the same port, and every deploy refuses to continue if
+the two disagree.
 
 A failed health gate triggers an automatic image-level rollback, which is safe
 here only because the engine owns no database.
