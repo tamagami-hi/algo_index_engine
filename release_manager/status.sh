@@ -519,6 +519,9 @@ action_engine_state() {
     printf '\n'
     info "/ready — whether the engine can actually work, and why not"
     bb_ssh "curl -sS -m 5 http://127.0.0.1:$port/ready | jq ." || warn "no answer"
+    printf '\n'
+    info "order postbacks — what Dhan has sent and what reached disk"
+    bb_ssh "curl -sS -m 5 http://127.0.0.1:$port/api/state | jq .postbacks" || warn "no answer"
 }
 
 action_diagnose() {

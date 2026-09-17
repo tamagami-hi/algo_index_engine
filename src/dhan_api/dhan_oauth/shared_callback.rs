@@ -41,8 +41,6 @@ impl SharedCallback {
         let redirect =
             Url::parse(redirect).map_err(|_| anyhow::anyhow!("Invalid Dhan redirect URL"))?;
 
-        // Messages below never echo the input: a redirect can carry credentials or
-        // a token, and an error string is the one place they would escape.
         if redirect.scheme() != "http" {
             bail!(
                 "Dhan redirect must use http. The callback is served by the backend's own loopback listener, so routing a public HTTPS origin to it needs proxy routing and a matching Dhan app registration, which is a separate change"

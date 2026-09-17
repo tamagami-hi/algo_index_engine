@@ -154,6 +154,25 @@ pub(crate) struct ChainSummaryView {
     pub(crate) strikes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PostbackOutcome {
+    Stored,
+    Oversized,
+    Unwritable,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct PostbackView {
+    pub(crate) received: u64,
+    pub(crate) stored: u64,
+    pub(crate) oversized: u64,
+    pub(crate) unwritable: u64,
+    pub(crate) bytes: u64,
+    pub(crate) journal_records: usize,
+    pub(crate) journal_day: Option<String>,
+    pub(crate) last_received_at_ms: Option<i64>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Snapshot {
     pub(crate) version: &'static str,
@@ -168,6 +187,7 @@ pub(crate) struct Snapshot {
     pub(crate) catalog: Option<CatalogView>,
     pub(crate) feed: FeedView,
     pub(crate) chains: Vec<ChainSummaryView>,
+    pub(crate) postbacks: PostbackView,
 }
 
 impl Snapshot {
@@ -185,6 +205,7 @@ impl Snapshot {
             catalog: None,
             feed: FeedView::default(),
             chains: Vec::new(),
+            postbacks: PostbackView::default(),
         }
     }
 }
@@ -287,8 +308,6 @@ impl EngineState {
         tracing::warn!(detail = %detail, "feed marked disconnected");
     }
 
-    /// Called on a timer rather than on a frame: going quiet is the absence of
-    /// frames, so nothing in the receive path can notice it.
     pub(crate) fn check_feed_silence(&self) {
         let limit = crate::option_chain::quality::freshness().feed_silence_max_ms;
         let (connected, last_frame_at, was_stale) = {
@@ -327,6 +346,29 @@ impl EngineState {
 
     pub(crate) fn feed_subscribed(&self, instruments: usize) {
         self.update(|snapshot| snapshot.feed.subscribed = instruments);
+    }
+
+    pub(crate) fn postback_received(
+        &self,
+        outcome: PostbackOutcome,
+        bytes: usize,
+        stored: Option<&crate::execution::postback::Stored>,
+    ) {
+        self.update(|snapshot| {
+            let postbacks = &mut snapshot.postbacks;
+            postbacks.received += 1;
+            postbacks.bytes += bytes as u64;
+            postbacks.last_received_at_ms = Some(now_millis());
+            match outcome {
+                PostbackOutcome::Stored => postbacks.stored += 1,
+                PostbackOutcome::Oversized => postbacks.oversized += 1,
+                PostbackOutcome::Unwritable => postbacks.unwritable += 1,
+            }
+            if let Some(stored) = stored {
+                postbacks.journal_records = stored.records;
+                postbacks.journal_day = Some(stored.day.clone());
+            }
+        });
     }
 
     pub(crate) fn chain_columns(&self, symbol: &str) -> Option<ChainColumns> {

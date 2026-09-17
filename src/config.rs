@@ -27,3 +27,7 @@ pub(crate) fn load_env() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/support/home.rs"]
+pub(crate) mod sandbox;

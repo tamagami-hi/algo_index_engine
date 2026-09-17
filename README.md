@@ -165,6 +165,39 @@ and installation instructions live in [release_manager/nginx](release_manager/ng
 The separate public-site stack remains disabled. See
 [the deployment guide](release_manager/README.md).
 
+### Order postbacks
+
+`POST /dhan/postback` receives Dhan's order status notifications. It stores each
+body verbatim and answers `200` only once the bytes are on disk; a webhook reads
+any other status as a delivery failure and this endpoint must not claim to hold
+something it dropped. Records append to `data/execution/postbacks-<day>.jsonl`,
+one JSON line per arrival carrying `received_at_ms`, `source`, `bytes` and the
+unmodified `body`. Bodies over 16 KiB are refused with `413`, and the transport
+itself stops reading past 64 KiB.
+
+Nothing interprets the payload yet. Parsing belongs with the live order execution
+mechanics, which do not exist, and guessing now how orders are keyed and
+reconciled would mean writing that guess into the journal. A postback is the
+broker's only unsolicited account of a real-money event, sent once per status
+change with no way to request it again, so the payload is kept exactly as sent
+and whatever parses it later parses the broker's own words. Arrivals are counted
+in `postbacks` on `/api/state`.
+
+`DHAN_POSTBACK_URL` in the env file records the URL you register in the Postback
+URL field on `web.dhan.co` when generating an access token. The engine does not
+register it for you; it validates it. Startup refuses a URL whose path is not
+`/dhan/postback`, since the engine serves postbacks nowhere else and any other
+path answers 404 while real order events are lost, and refuses a loopback URL
+whose port is not the backend's. The variable may be left empty, and the engine
+still serves the route.
+
+Two things must be settled before this can receive live traffic. Dhan will not
+deliver to a `localhost` or `127.0.0.1` postback URL, and this engine listens on
+loopback behind a tailnet-only vhost, so nothing public routes to it today. Dhan
+also signs nothing: no HMAC, no shared secret, no header to verify. Making the
+endpoint publicly reachable therefore creates an unauthenticated public write
+path, which needs a deliberate decision rather than a configuration change.
+
 Deploy to AWS `ap-south-1` (Mumbai). Dhan's infrastructure is in Mumbai, and a US region
 adds roughly 200ms round trip, which is longer than the opportunities this strategy is
 looking for.

@@ -19,6 +19,7 @@ pub(crate) async fn run() -> Result<()> {
     let engine = EngineState::new();
     let addr = http::listen_addr()?;
     let callback = crate::dhan_api::dhan_auth::configured_callback(addr)?;
+    crate::execution::postback::configured(addr)?;
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("cannot bind the HTTP server to {addr}"))?;

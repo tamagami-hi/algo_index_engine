@@ -53,11 +53,21 @@ The saved session is reused until it needs renewal. `token_url` remains an
 alternative for fetching tokens without browser login. No second callback
 port is published, and no public exposure is required.
 
+`DHAN_POSTBACK_URL` records the URL registered in the Postback URL field on
+`web.dhan.co`, where Dhan posts live order status changes. The example ships it
+empty and the engine serves `POST /dhan/postback` either way; the variable exists
+so startup can refuse a URL that disagrees with the route actually served,
+because a 404 there loses real order events with nothing to replay. Leave it
+empty on this stack: Dhan does not deliver to loopback URLs and signs nothing, so
+a value here is only meaningful once a deliberate decision has been made about
+exposing an unauthenticated write path.
+
 ## Data
 
 The named volume `algo_index_engine_data` holds `/app/data`: the Dhan session
-token and the dated instrument masters. A rollback never touches it, so the
-session survives and the engine does not need to re-authenticate.
+token, the dated instrument masters, and the order postback journals under
+`data/execution`. A rollback never touches it, so the session survives and the
+engine does not need to re-authenticate.
 
 ```sh
 docker run --rm -v algo_index_engine_data:/data alpine:3.22 ls -la /data/instruments
@@ -65,6 +75,15 @@ docker run --rm -v algo_index_engine_data:/data alpine:3.22 ls -la /data/instrum
 
 Masters accumulate at roughly 34 MiB per trading day. The deploy prunes them to
 `retention.keep_instrument_masters` from `paths.json`.
+
+Postbacks append to `data/execution/postbacks-<day>.jsonl`, one JSON line per
+arrival, each holding the broker's body unmodified. These are the only record of
+what happened to live orders and nothing prunes them.
+
+```sh
+docker run --rm -v algo_index_engine_data:/data alpine:3.22 \
+  sh -c 'wc -l /data/execution/*.jsonl 2>/dev/null || echo "no postbacks yet"'
+```
 
 ## Health
 

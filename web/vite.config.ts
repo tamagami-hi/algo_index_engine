@@ -13,9 +13,6 @@ export default defineConfig(({ command }) => {
     try {
       proxy = apiProxy(readBackendAddress(ENV_FILE));
     } catch (cause) {
-      // Warned rather than thrown so building and testing never need a backend.
-      // Loud enough that a proxyless dev server is not a mystery when /api
-      // returns the index page instead of JSON.
       console.warn(
         `[vite] not proxying /api, /health or /ready: ${String(cause)}\n` +
           `[vite] set ${ADDRESS_VARIABLE} in ${ENV_FILE}, the one place this repository takes the port from.`,

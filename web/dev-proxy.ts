@@ -7,13 +7,6 @@ export interface ProxyTarget {
   changeOrigin: boolean;
 }
 
-// The env file is the only source of truth for the port. Nothing here, in the
-// compose files, in the Rust source or in the deploy scripts supplies a fallback,
-// so a single edit in one file moves the backend, the Docker mapping, the browser
-// callback and this proxy together.
-//
-// Parsed rather than read from process.env: an exported shell variable would be a
-// second place the port could come from, and the two could disagree.
 export function parseEnvFile(text: string): Map<string, string> {
   const values = new Map<string, string>();
 
@@ -37,8 +30,6 @@ export function parseEnvFile(text: string): Map<string, string> {
     values.set(key, value);
   }
 
-  // ${NAME} references, the way Compose expands them, so BLACKBOX_HTTP_ADDR can
-  // be written in terms of BLACKBOX_HTTP_PORT and stay in step with it.
   const expand = (raw: string, seen: Set<string>): string =>
     raw.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, name: string) => {
       if (seen.has(name)) {

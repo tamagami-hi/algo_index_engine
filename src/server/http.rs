@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{StatusCode, header},
     response::{
         IntoResponse, Response,
@@ -23,9 +23,10 @@ use serde::{Deserialize, Serialize};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::dhan_api::dhan_oauth::shared_callback::SharedCallback;
+use crate::execution::postback;
 use crate::option_chain::book::ChainColumns;
 use crate::risk_engine;
-use crate::server::state::{EngineState, Snapshot};
+use crate::server::state::{EngineState, PostbackOutcome, Snapshot};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct StreamParams {
@@ -48,6 +49,10 @@ struct StreamFrame {
 #[cfg(test)]
 #[path = "../../tests/server/shared_callback.rs"]
 mod shared_callback_tests;
+
+#[cfg(test)]
+#[path = "../../tests/server/postback.rs"]
+mod postback_tests;
 const WEB_ROOT: &str = "web/dist";
 const ADDR_VARIABLE: &str = "BLACKBOX_HTTP_ADDR";
 const PUBLISH_INTERVAL_VARIABLE: &str = "BLACKBOX_PUBLISH_INTERVAL_MS";
@@ -122,6 +127,10 @@ pub(crate) async fn serve(
         .route("/api/strategies/{id}/activate", post(api_activate))
         .route("/api/strategies/{id}/deactivate", post(api_deactivate))
         .route("/api/active", get(api_active))
+        .route(
+            postback::POSTBACK_PATH,
+            post(dhan_postback).layer(DefaultBodyLimit::max(postback::POSTBACK_BODY_LIMIT_BYTES)),
+        )
         .with_state(Http {
             engine,
             shutdown: shutdown.clone(),
@@ -501,5 +510,78 @@ async fn api_resolve_strategy(State(http): State<Http>, Path(id): Path<String>) 
             StatusCode::SERVICE_UNAVAILABLE,
             format!("no live chain for {}", strategy.underlying),
         ),
+    }
+}
+
+const SOURCE_HEADER: &str = "x-forwarded-for";
+const SOURCE_MAX_CHARS: usize = 120;
+
+fn postback_source(headers: &header::HeaderMap) -> Option<String> {
+    let raw = headers
+        .get(SOURCE_HEADER)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(raw.chars().take(SOURCE_MAX_CHARS).collect())
+}
+
+async fn dhan_postback(
+    State(http): State<Http>,
+    headers: header::HeaderMap,
+    body: String,
+) -> Response {
+    let source = postback_source(&headers);
+    let bytes = body.len();
+
+    if bytes > postback::MAX_POSTBACK_BYTES {
+        http.engine
+            .postback_received(PostbackOutcome::Oversized, bytes, None);
+        tracing::warn!(
+            bytes,
+            limit = postback::MAX_POSTBACK_BYTES,
+            source = ?source,
+            "rejected an oversized order postback"
+        );
+        return failed(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "postback body is {bytes} bytes; the limit is {}",
+                postback::MAX_POSTBACK_BYTES
+            ),
+        );
+    }
+
+    match postback::record(&body, source.as_deref()) {
+        Ok(stored) => {
+            http.engine
+                .postback_received(PostbackOutcome::Stored, bytes, Some(&stored));
+            tracing::info!(
+                bytes,
+                day = %stored.day,
+                records = stored.records,
+                source = ?source,
+                "stored an order postback"
+            );
+            encoded(
+                StatusCode::OK,
+                &serde_json::json!({ "stored": true, "records": stored.records }),
+            )
+        }
+        Err(error) => {
+            http.engine
+                .postback_received(PostbackOutcome::Unwritable, bytes, None);
+            tracing::error!(
+                bytes,
+                source = ?source,
+                error = %format!("{error:#}"),
+                "cannot store an order postback"
+            );
+            failed(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "cannot store the postback",
+            )
+        }
     }
 }

@@ -72,6 +72,38 @@ for variant in local vps; do
     check_rejected "$variant empty port" render_port "$ROOT/$variant/compose.yaml" "$ROOT/$variant/.env"
 done
 
+printf '\nThe order postback URL comes from the same one port\n'
+render_postback() {
+    local file="$1" env_file="$2"
+    docker compose --project-name port-test --env-file "$env_file" \
+        --file "$file" config --format json | jq -r \
+        '.services.engine.environment.DHAN_POSTBACK_URL // "absent"'
+}
+
+# The engine refuses to start on a postback URL whose path is not the route it
+# serves, so a rename in the Rust source has to reach the env examples too. This
+# is the only place the two are compared.
+served_path="$(sed -n 's/^pub(crate) const POSTBACK_PATH: &str = "\(.*\)";$/\1/p' \
+    "$REPO/src/execution/postback.rs")"
+check_equal 'the served postback path is readable from the source' '/dhan/postback' "$served_path"
+
+local_port="$(sed -n 's/^BLACKBOX_HTTP_PORT=\([0-9][0-9]*\)$/\1/p' "$REPO/.env.example")"
+cp "$REPO/.env.example" "$ROOT/local/.env"
+check_equal 'the local example postback URL takes the env port and the served path' \
+    "http://127.0.0.1:$local_port$served_path" \
+    "$(render_postback "$ROOT/local/compose.yaml" "$ROOT/local/.env")"
+
+sed 's/^BLACKBOX_HTTP_PORT=.*/BLACKBOX_HTTP_PORT=49123/' "$REPO/.env.example" > "$ROOT/local/.env"
+check_equal 'the postback URL moves with the env port' \
+    "http://127.0.0.1:49123$served_path" \
+    "$(render_postback "$ROOT/local/compose.yaml" "$ROOT/local/.env")"
+
+# Empty rather than absent: Dhan will not deliver to a loopback URL and signs
+# nothing, so the deployed stack must not ship a value that looks ready to use.
+cp "$REPO/release_manager/stacks/index_engine/.env.example" "$ROOT/vps/.env"
+check_equal 'the VPS example ships the postback URL unset' '' \
+    "$(render_postback "$ROOT/vps/compose.yaml" "$ROOT/vps/.env")"
+
 printf '\nNative deployment uses the authoritative env path\n'
 # shellcheck source=../stacks/_shared/_bb_lib.sh
 source "$HERE/../stacks/_shared/_bb_lib.sh"

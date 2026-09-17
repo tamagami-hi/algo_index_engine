@@ -5,6 +5,8 @@ use crate::risk_engine::strategy::{
 };
 use crate::risk_engine::strike::{Moneyness, Side, StrikeCriteria};
 
+use crate::config::sandbox::Sandbox;
+
 fn strategy(id: &str, underlying: &str) -> Strategy {
     Strategy {
         id: id.to_owned(),
@@ -32,30 +34,6 @@ fn strategy(id: &str, underlying: &str) -> Strategy {
         }],
         overall: OverallRisk::default(),
         loss_coverage: LossCoverage::Breakeven,
-    }
-}
-
-static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-struct Sandbox {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    _directory: tempfile::TempDir,
-}
-
-impl Sandbox {
-    fn new() -> Self {
-        let guard = HOME_LOCK.lock().unwrap_or_else(|error| {
-            HOME_LOCK.clear_poison();
-            error.into_inner()
-        });
-        let directory = tempfile::tempdir().expect("temp dir");
-        unsafe {
-            std::env::set_var("BLACKBOX_HOME", directory.path());
-        }
-        Self {
-            _guard: guard,
-            _directory: directory,
-        }
     }
 }
 
@@ -244,8 +222,8 @@ fn a_strategy_named_active_cannot_overwrite_the_activation_set() {
     let reloaded = load("active").expect("the strategy called active is still a strategy");
     assert_eq!(reloaded.underlying, "BANKNIFTY");
 
-    let definitions = sandbox._directory.path().join("data/strategies");
-    let state = sandbox._directory.path().join("data/state");
+    let definitions = sandbox.path().join("data/strategies");
+    let state = sandbox.path().join("data/state");
     assert!(
         definitions.join("active.json").exists(),
         "the strategy lives under the definitions directory"
@@ -324,7 +302,7 @@ fn an_over_long_id_is_refused_before_it_reaches_the_filesystem() {
 #[test]
 fn the_activation_set_migrates_out_of_the_strategy_directory_once_and_idempotently() {
     let sandbox = Sandbox::new();
-    let root = sandbox._directory.path();
+    let root = sandbox.path();
     let definitions = root.join("data/strategies");
     let state = root.join("data/state");
 
@@ -360,7 +338,7 @@ fn migration_leaves_a_real_strategy_called_active_alone() {
     save(&strategy("active", "SENSEX")).expect("save a strategy called active");
     migrate().expect("migrate");
 
-    let definitions = sandbox._directory.path().join("data/strategies");
+    let definitions = sandbox.path().join("data/strategies");
     assert!(
         definitions.join("active.json").exists(),
         "a strategy file must not be mistaken for the activation set and moved"
@@ -376,7 +354,7 @@ fn migration_leaves_a_real_strategy_called_active_alone() {
 #[test]
 fn existing_valid_strategies_remain_readable_after_the_layout_change() {
     let sandbox = Sandbox::new();
-    let definitions = sandbox._directory.path().join("data/strategies");
+    let definitions = sandbox.path().join("data/strategies");
     std::fs::create_dir_all(&definitions).expect("mkdir");
 
     let existing = strategy("pre-existing", "FINNIFTY");

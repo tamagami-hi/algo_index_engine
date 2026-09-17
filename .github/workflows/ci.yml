@@ -194,6 +194,34 @@ jobs:
           echo "--- the frontend is baked into the image"
           docker exec aie-ci test -f /app/web/dist/index.html
 
+          echo "--- order postbacks are received and journalled in the real image"
+          body='{"orderId":"ci","orderStatus":"TRADED","filled_qty":"50"}'
+          code="$(curl -s -o /tmp/postback.json -w '%{http_code}' -m 5 \
+            -X POST -H 'content-type: application/json' \
+            --data "$body" "http://127.0.0.1:${TEST_HTTP_PORT}/dhan/postback")"
+          cat /tmp/postback.json
+          test "$code" = "200" || { echo "a postback must be accepted, got $code"; exit 1; }
+          docker exec aie-ci sh -c 'cat /app/data/execution/postbacks-*.jsonl' > /tmp/journal.jsonl
+          jq -e --arg body "$body" 'select(.body == $body)' /tmp/journal.jsonl \
+            || { echo "the journal did not keep the body verbatim"; cat /tmp/journal.jsonl; exit 1; }
+
+          echo "--- an oversized postback is refused rather than stored"
+          code="$(head -c 20000 /dev/zero | tr '\0' '0' | curl -s -o /dev/null -w '%{http_code}' -m 5 \
+            -X POST --data-binary @- "http://127.0.0.1:${TEST_HTTP_PORT}/dhan/postback")"
+          test "$code" = "413" || { echo "expected 413 for an oversized body, got $code"; exit 1; }
+          test "$(docker exec aie-ci sh -c 'cat /app/data/execution/postbacks-*.jsonl | wc -l')" = "1" \
+            || { echo "a refused postback must not reach the journal"; exit 1; }
+
+          echo "--- the postback route is the only one that accepts a body"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 \
+            "http://127.0.0.1:${TEST_HTTP_PORT}/dhan/postback")"
+          test "$code" = "405" || { echo "expected 405 for GET, got $code"; exit 1; }
+
+          echo "--- postback counters reach /api/state"
+          curl -fsS -m 5 "http://127.0.0.1:${TEST_HTTP_PORT}/api/state" | tee /tmp/state.json >/dev/null
+          jq -e '.postbacks | .received == 2 and .stored == 1 and .oversized == 1' /tmp/state.json \
+            || { jq .postbacks /tmp/state.json; exit 1; }
+
       - name: container logs on failure
         if: failure()
         run: docker logs aie-ci
