@@ -323,6 +323,7 @@ bash release_manager/tests/port_configuration.sh
 bash release_manager/tests/nginx_ship.sh
 bash release_manager/tests/release_profile.sh
 bash release_manager/tests/version_bump.sh
+bash release_manager/tests/unbound_variables.sh
 cargo build --locked --release
 ```
 

@@ -154,6 +154,9 @@ jobs:
       - name: a version bump moves every file that quotes it
         run: bash release_manager/tests/version_bump.sh
 
+      - name: no shell variable is used before it is assigned
+        run: bash release_manager/tests/unbound_variables.sh
+
   image:
     name: container image
     runs-on: ubuntu-latest

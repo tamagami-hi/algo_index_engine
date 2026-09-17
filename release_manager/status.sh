@@ -612,7 +612,7 @@ action_verify() {
     fi
 
     local suite
-    for suite in rollback_pairing access_control port_configuration nginx_ship release_profile version_bump; do
+    for suite in rollback_pairing access_control port_configuration nginx_ship release_profile version_bump unbound_variables; do
         [[ -f "$RM_DIR/tests/$suite.sh" ]] || continue
         step "$suite"
         bash "$RM_DIR/tests/$suite.sh" >/dev/null 2>&1 \

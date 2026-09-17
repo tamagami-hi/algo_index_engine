@@ -117,6 +117,7 @@ COMPOSE_NAME="$(stack_attr "$STACK" compose)"
 DEPLOY_NAME="$(stack_attr "$STACK" deploy)"
 ROLLBACK_NAME="$(stack_attr "$STACK" rollback)"
 GUIDE_NAME="$(stack_attr "$STACK" guide)"
+VERSION_NAME="$(stack_attr "$STACK" version_file)"
 
 for f in manifest.json paths.json checksums.sha256 "$COMPOSE_NAME" \
          "$DEPLOY_NAME" "$ROLLBACK_NAME" \
@@ -416,7 +417,6 @@ printf '\n'
 # ── 6. reconcile ────────────────────────────────────────────────────────────
 section "6/6  RECONCILE"
 
-VERSION_NAME="$(stack_attr "$STACK" version_file)"
 DEPLOYED="$(bb_ssh "jq -r '.version // empty' '$REMOTE_DIR/$VERSION_NAME' 2>/dev/null" || true)"
 STATUS="$(bb_ssh "jq -r '.status // empty' '$REMOTE_DIR/$VERSION_NAME' 2>/dev/null" || true)"
 
