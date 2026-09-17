@@ -11,6 +11,71 @@ function useTick(ms: number): number {
   return now;
 }
 
+function DhanLogin() {
+  const snapshot = useEngine((store) => store.snapshot);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const login = snapshot?.login;
+  const phase = snapshot?.phase;
+  const authenticating = phase === "authenticating" || phase === "auth_failed";
+  const consent = login?.consent_url ?? null;
+
+  async function trigger() {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const response = await fetch("/api/dhan/login", { method: "POST" });
+      if (!response.ok) {
+        setProblem(`the engine refused the request (${response.status})`);
+      }
+    } catch (cause) {
+      setProblem(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title="dhan login">
+      <div className="grid">
+        <Stat
+          k="session"
+          v={authenticating ? "not logged in" : "active"}
+          tone={authenticating ? "down" : "up"}
+        />
+        <Stat k="consent link" v={consent ? "ready" : "none"} tone={consent ? "warnfg" : undefined} />
+        <Stat k="manual logins" v={int(login?.requests ?? 0)} />
+      </div>
+
+      <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", marginTop: "0.7rem" }}>
+        <button type="button" className="tag live" onClick={trigger} disabled={busy}>
+          {busy ? "requesting…" : "Log in to Dhan"}
+        </button>
+        {consent ? (
+          <a className="tag" href={consent} target="_blank" rel="noreferrer noopener">
+            open the Dhan consent page ↗
+          </a>
+        ) : null}
+      </div>
+
+      {consent ? (
+        <div className="muted" style={{ marginTop: "0.6rem", wordBreak: "break-all" }}>
+          {consent}
+        </div>
+      ) : (
+        <div className="muted" style={{ marginTop: "0.6rem" }}>
+          {authenticating
+            ? "waiting for a consent link — press the button to start a login now"
+            : "the engine has a session; press the button to discard it and log in again"}
+        </div>
+      )}
+
+      {problem ? <div className="err">{problem}</div> : null}
+    </Panel>
+  );
+}
+
 export function Telemetry() {
   const snapshot = useEngine((store) => store.snapshot);
   const link = useEngine((store) => store.link);
@@ -19,11 +84,14 @@ export function Telemetry() {
 
   if (!snapshot) {
     return (
-      <Panel title="engine">
-        <span className="muted">
-          {link === "open" ? "waiting for the first frame…" : "connecting to the engine…"}
-        </span>
-      </Panel>
+      <>
+        <Panel title="engine">
+          <span className="muted">
+            {link === "open" ? "waiting for the first frame…" : "connecting to the engine…"}
+          </span>
+        </Panel>
+        <DhanLogin />
+      </>
     );
   }
 
@@ -47,6 +115,7 @@ export function Telemetry() {
 
   return (
     <>
+      <DhanLogin />
       <Panel title="engine">
         <div className="big">
           <Big k="phase" v={snapshot.phase_label} tone={snapshot.phase === "feed_connected" ? "up" : snapshot.phase.endsWith("failed") ? "down" : "warnfg"} />

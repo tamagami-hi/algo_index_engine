@@ -12,7 +12,29 @@ use super::dhan_auth::DhanCredentials;
 use anyhow::{Context, Result};
 use server_callbacks::{AUTH_BASE, exchange_token, generate_consent};
 use shared_callback::SharedCallback;
+use std::sync::Mutex;
 use types::{Config, DhanSession, EXPIRY_MARGIN_SECONDS};
+
+static CONSENT: Mutex<Option<String>> = Mutex::new(None);
+
+fn consent_slot() -> std::sync::MutexGuard<'static, Option<String>> {
+    CONSENT.lock().unwrap_or_else(|error| {
+        CONSENT.clear_poison();
+        error.into_inner()
+    })
+}
+
+pub(crate) fn pending_consent() -> Option<String> {
+    consent_slot().clone()
+}
+
+fn publish_consent(url: &str) {
+    *consent_slot() = Some(url.to_owned());
+}
+
+fn clear_consent() {
+    *consent_slot() = None;
+}
 
 pub(crate) fn saved_token(client_id: &str, api_key: &str) -> Option<String> {
     let session = session::read(&session::path())?;
@@ -27,6 +49,15 @@ pub(crate) fn saved_token(client_id: &str, api_key: &str) -> Option<String> {
         );
         session.access_token
     })
+}
+
+pub(crate) fn discard_session() -> Result<()> {
+    let path = session::path();
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("cannot discard {}", path.display())),
+    }
 }
 
 pub(crate) async fn get_credentials(callback: Option<&SharedCallback>) -> Result<DhanCredentials> {
@@ -60,12 +91,18 @@ async fn interactive_login(
     };
     let authenticated = exchange_token(config, &token_id, AUTH_BASE).await?;
     session::save(&session::path(), &authenticated)?;
+    clear_consent();
     Ok(authenticated)
 }
 
 async fn announce_login(config: &Config) -> Result<()> {
     let login_url = generate_consent(config, AUTH_BASE).await?;
+    publish_consent(&login_url);
     println!("Open this Dhan login URL in your browser:\n{login_url}");
+    tracing::info!(
+        url = %login_url,
+        "Dhan consent URL published; open it within five minutes"
+    );
     open_browser(&login_url).await;
     println!("Waiting up to five minutes for Dhan login and 2FA in your browser...");
     Ok(())

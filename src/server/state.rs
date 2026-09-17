@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::Serialize;
 use tokio::sync::watch;
@@ -179,6 +179,46 @@ pub(crate) struct PostbackView {
     pub(crate) last_received_at_ms: Option<i64>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct LoginView {
+    pub(crate) pending: bool,
+    pub(crate) consent_url: Option<String>,
+    pub(crate) requested_at_ms: Option<i64>,
+    pub(crate) completed_at_ms: Option<i64>,
+    pub(crate) requests: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct LoginControl {
+    forced: std::sync::atomic::AtomicBool,
+    cycle: Mutex<Option<tokio_util::sync::CancellationToken>>,
+}
+
+impl LoginControl {
+    fn set_cycle(&self, token: tokio_util::sync::CancellationToken) {
+        if let Ok(mut slot) = self.cycle.lock() {
+            *slot = Some(token);
+        }
+    }
+
+    fn take_forced(&self) -> bool {
+        self.forced.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn is_forced(&self) -> bool {
+        self.forced.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn force(&self) {
+        self.forced.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(slot) = self.cycle.lock()
+            && let Some(token) = slot.as_ref()
+        {
+            token.cancel();
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Snapshot {
     pub(crate) version: &'static str,
@@ -194,6 +234,7 @@ pub(crate) struct Snapshot {
     pub(crate) feed: FeedView,
     pub(crate) chains: Vec<ChainSummaryView>,
     pub(crate) postbacks: PostbackView,
+    pub(crate) login: LoginView,
 }
 
 impl Snapshot {
@@ -212,6 +253,7 @@ impl Snapshot {
             feed: FeedView::default(),
             chains: Vec::new(),
             postbacks: PostbackView::default(),
+            login: LoginView::default(),
         }
     }
 }
@@ -220,6 +262,7 @@ impl Snapshot {
 pub(crate) struct EngineState {
     sender: Arc<watch::Sender<Snapshot>>,
     book: Arc<RwLock<Option<ChainBook>>>,
+    login: Arc<LoginControl>,
 }
 
 impl EngineState {
@@ -228,7 +271,47 @@ impl EngineState {
         Self {
             sender: Arc::new(sender),
             book: Arc::new(RwLock::new(None)),
+            login: Arc::new(LoginControl::default()),
         }
+    }
+
+    pub(crate) fn request_login(&self) -> bool {
+        self.login.force();
+        self.update(|snapshot| {
+            snapshot.login.requests += 1;
+            snapshot.login.requested_at_ms = Some(now_millis());
+            snapshot.login.completed_at_ms = None;
+        });
+        tracing::info!("a fresh Dhan login was requested from the interface");
+        true
+    }
+
+    pub(crate) fn login_requested(&self) -> bool {
+        self.login.is_forced()
+    }
+
+    pub(crate) fn take_login_request(&self) -> bool {
+        self.login.take_forced()
+    }
+
+    pub(crate) fn register_cycle(&self, token: tokio_util::sync::CancellationToken) {
+        self.login.set_cycle(token);
+    }
+
+    pub(crate) fn login_awaiting_consent(&self) {
+        let url = crate::dhan_api::dhan_oauth::pending_consent();
+        self.update(|snapshot| {
+            snapshot.login.pending = url.is_some();
+            snapshot.login.consent_url = url;
+        });
+    }
+
+    pub(crate) fn login_completed(&self) {
+        self.update(|snapshot| {
+            snapshot.login.pending = false;
+            snapshot.login.consent_url = None;
+            snapshot.login.completed_at_ms = Some(now_millis());
+        });
     }
 
     pub(crate) fn subscribe(&self) -> watch::Receiver<Snapshot> {

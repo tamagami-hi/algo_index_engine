@@ -44,6 +44,15 @@ pub(crate) async fn run(
             }
         }
 
+        // A login asked for from the interface must not sit behind a backoff that
+        // has already doubled its way up to five minutes. The operator is waiting
+        // at the screen for a consent link.
+        if engine.login_requested() {
+            backoff = RETRY_MIN;
+            tracing::info!("a login was requested; retrying immediately");
+            continue;
+        }
+
         tracing::info!(seconds = backoff.as_secs(), "retrying");
         tokio::select! {
             () = shutdown.cancelled() => break,
@@ -62,11 +71,36 @@ async fn cycle(
     shutdown: &CancellationToken,
     callback: Option<&SharedCallback>,
 ) -> Result<()> {
+    // A child of the shutdown token, so a login request can end this cycle
+    // without taking the HTTP server down with it. Cancelling the shared token
+    // would stop the very interface the operator is using to log in.
+    let cycle_token = shutdown.child_token();
+    engine.register_cycle(cycle_token.clone());
+
+    let forced = engine.take_login_request();
+    if forced {
+        if let Err(error) = crate::dhan_api::dhan_oauth::discard_session() {
+            tracing::warn!(error = %format!("{error:#}"), "could not discard the saved session");
+        } else {
+            tracing::info!("saved Dhan session discarded for a requested fresh login");
+        }
+    }
+
     engine.set_phase(Phase::Authenticating, "");
+    let announce = {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            for _ in 0..600 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                engine.login_awaiting_consent();
+            }
+        })
+    };
     let authentication = tokio::select! {
-        () = shutdown.cancelled() => return Ok(()),
+        () = shutdown.cancelled() => { announce.abort(); return Ok(()); },
         result = get_dhan_credentials(callback) => result,
     };
+    announce.abort();
     let credentials = match authentication {
         Ok(credentials) => credentials,
         Err(error) => {
@@ -75,6 +109,7 @@ async fn cycle(
             anyhow::bail!(detail);
         }
     };
+    engine.login_completed();
 
     let as_of = ist_today()?;
     let reason = reload_reason(loaded.as_ref(), &as_of);
@@ -107,7 +142,7 @@ async fn cycle(
         catalog,
         &as_of,
         engine,
-        shutdown,
+        &cycle_token,
     )
     .await
 }

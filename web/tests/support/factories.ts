@@ -91,6 +91,13 @@ export function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       indices: { NIFTY: 25050 },
     },
     chains: [],
+    login: {
+      pending: false,
+      consent_url: null,
+      requested_at_ms: null,
+      completed_at_ms: null,
+      requests: 0,
+    },
     ...overrides,
   };
 }

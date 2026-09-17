@@ -70,6 +70,14 @@ export interface CatalogView {
   chains: CatalogChain[];
 }
 
+export interface LoginView {
+  pending: boolean;
+  consent_url: string | null;
+  requested_at_ms: number | null;
+  completed_at_ms: number | null;
+  requests: number;
+}
+
 export interface Snapshot {
   version: string;
   sequence: number;
@@ -83,6 +91,7 @@ export interface Snapshot {
   catalog: CatalogView | null;
   feed: FeedView;
   chains: ChainSummaryView[];
+  login: LoginView;
 }
 
 export interface ChainMetrics {

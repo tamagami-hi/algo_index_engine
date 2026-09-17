@@ -127,6 +127,7 @@ pub(crate) async fn serve(
         .route("/api/strategies/{id}/activate", post(api_activate))
         .route("/api/strategies/{id}/deactivate", post(api_deactivate))
         .route("/api/active", get(api_active))
+        .route("/api/dhan/login", post(api_dhan_login))
         .route(
             postback::POSTBACK_PATH,
             post(dhan_postback).layer(DefaultBodyLimit::max(postback::POSTBACK_BODY_LIMIT_BYTES)),
@@ -447,6 +448,20 @@ async fn api_strategy_template(Query(params): Query<StreamParams>) -> Response {
 
 async fn api_active() -> Response {
     encoded(StatusCode::OK, &risk_engine::store::active())
+}
+
+async fn api_dhan_login(State(http): State<Http>) -> Response {
+    let snapshot = http.engine.snapshot();
+    http.engine.request_login();
+    encoded(
+        StatusCode::ACCEPTED,
+        &serde_json::json!({
+            "requested": true,
+            "phase": snapshot.phase_label,
+            "detail": "the engine will discard any saved session and start a fresh Dhan login; \
+                       the consent URL appears in login.consent_url within a few seconds",
+        }),
+    )
 }
 
 async fn api_strategy(Path(id): Path<String>) -> Response {
