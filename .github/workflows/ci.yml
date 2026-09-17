@@ -151,6 +151,9 @@ jobs:
       - name: the shipped binary is an optimised release build
         run: bash release_manager/tests/release_profile.sh
 
+      - name: a version bump moves every file that quotes it
+        run: bash release_manager/tests/version_bump.sh
+
   image:
     name: container image
     runs-on: ubuntu-latest

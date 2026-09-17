@@ -612,7 +612,7 @@ action_verify() {
     fi
 
     local suite
-    for suite in rollback_pairing access_control port_configuration nginx_ship release_profile; do
+    for suite in rollback_pairing access_control port_configuration nginx_ship release_profile version_bump; do
         [[ -f "$RM_DIR/tests/$suite.sh" ]] || continue
         step "$suite"
         bash "$RM_DIR/tests/$suite.sh" >/dev/null 2>&1 \
@@ -655,6 +655,222 @@ action_engine_guide() {
     if command -v less >/dev/null; then less "$guide"; else cat "$guide"; fi
 }
 
+# ── cutting a release ───────────────────────────────────────────────────────
+# This is the ONLY place the version advances, and the only place a tag is made.
+# export.sh reads the tag to decide between a stable and a dev label; it never
+# writes one, so nothing else in the pipeline can move the version by accident.
+
+CRATE_NAME='algo_index_engine'
+
+# A release tag has to name a commit that exists somewhere other than this
+# laptop. Tagging an unpushed commit produces a version nobody else can check
+# out, and the tag is what export.sh trusts to call a bundle stable.
+require_release_git() {
+    local branch dirty ahead behind
+
+    branch="$(git -C "$ROOT_DIR" symbolic-ref --short -q HEAD || true)"
+    [[ "$branch" == main ]] || {
+        err "releases are cut from main, not ${branch:-a detached HEAD}"
+        return 1
+    }
+
+    dirty="$(git -C "$ROOT_DIR" status --porcelain | wc -l)"
+    (( dirty == 0 )) || {
+        err "the tree has $dirty uncommitted change(s); commit or stash before cutting a release"
+        info "the bump commit must contain the version files and nothing else"
+        return 1
+    }
+
+    step "fetching origin"
+    git -C "$ROOT_DIR" fetch --quiet --tags origin || {
+        err "cannot reach origin; a release tag must be pushable"
+        return 1
+    }
+
+    git -C "$ROOT_DIR" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null || {
+        err "origin/main does not exist; push main before cutting a release"
+        return 1
+    }
+
+    behind="$(git -C "$ROOT_DIR" rev-list --count HEAD..refs/remotes/origin/main)"
+    (( behind == 0 )) || {
+        err "main is $behind commit(s) behind origin/main; integrate before releasing"
+        return 1
+    }
+
+    ahead="$(git -C "$ROOT_DIR" rev-list --count refs/remotes/origin/main..HEAD)"
+    if (( ahead > 0 )); then
+        warn "main is $ahead commit(s) ahead of origin/main"
+        info "the release push below sends them together with the tag, atomically"
+    fi
+    ok "on main, clean, and in step with origin"
+}
+
+restore_version_files() {
+    local files
+    mapfile -t files < <(version_files "$ROOT_DIR")
+    (( ${#files[@]} > 0 )) || return 0
+    ( cd "$ROOT_DIR" && git checkout --quiet -- "${files[@]}" ) \
+        && info "restored the version files" \
+        || warn "could not restore: check git status"
+}
+
+# write_release_version <x.y.z> — every file that quotes the version, then proof.
+write_release_version() {
+    local next="$1"
+
+    step "Cargo.toml → $next"
+    set_cargo_version "$ROOT_DIR/Cargo.toml" "$next" || return 1
+
+    # cargo owns the lock. Regenerating it here rather than leaving it to the
+    # next build is what makes the bump commit self-consistent: --locked, which
+    # CI and the release build both pass, refuses to update it later.
+    step "Cargo.lock (cargo update --workspace --offline)"
+    if ! ( cd "$ROOT_DIR" && cargo update --workspace --offline --quiet 2>/dev/null ); then
+        ( cd "$ROOT_DIR" && cargo update --workspace --quiet ) || {
+            err "cargo could not update the lock file"
+            return 1
+        }
+    fi
+
+    local json
+    for json in web/package.json web/package-lock.json; do
+        [[ -f "$ROOT_DIR/$json" ]] || continue
+        step "$json → $next"
+        set_json_version "$ROOT_DIR/$json" "$next" || return 1
+    done
+
+    step "every version file agrees"
+    assert_version_files_agree "$ROOT_DIR" "$CRATE_NAME" "$next" || return 1
+    ok "Cargo.toml, Cargo.lock and the frontend all read $next"
+
+    # The lock is only proven consistent by the flag that will reject it.
+    step "cargo check --locked"
+    ( cd "$ROOT_DIR" && cargo check --locked --quiet ) || {
+        err "the bumped tree does not satisfy --locked, which CI requires"
+        return 1
+    }
+    ok "the lock file matches the manifest"
+}
+
+action_cut_release() {
+    status_lock || return 1
+
+    local canonical next bump choice remote
+    canonical="$(cargo_version "$ROOT_DIR/Cargo.toml")" || return 1
+    assert_semver "$canonical" || return 1
+
+    section "CUT RELEASE" "Cargo.toml currently reads $canonical"
+
+    if on_exact_release_tag "$ROOT_DIR" "$canonical"; then
+        info "HEAD is already tag v$canonical — export would produce a stable bundle now"
+    fi
+
+    require_release_git || return 1
+
+    printf '\n'
+    printf '   1) patch → %s   %s\n' "$(bump_version "$canonical" patch)" \
+        "${c_dim}a fix or an internal change${c_rst}"
+    printf '   2) minor → %s   %s\n' "$(bump_version "$canonical" minor)" \
+        "${c_dim}new capability, backwards compatible${c_rst}"
+    printf '   3) major → %s   %s\n' "$(bump_version "$canonical" major)" \
+        "${c_dim}a break in behaviour or contract${c_rst}"
+    printf '   4) release %s as it stands   %s\n' "$canonical" \
+        "${c_dim}tag the current version without bumping${c_rst}"
+    printf '   5) cancel\n\n'
+    printf '%s   ➜ choice [1-5]: %s' "$c_bold" "$c_rst"
+    read -r choice || return 0
+    case "$choice" in
+        1) bump=patch ;;
+        2) bump=minor ;;
+        3) bump=major ;;
+        4) bump=none ;;
+        *) warn "cancelled"; return 0 ;;
+    esac
+
+    if [[ "$bump" == none ]]; then
+        next="$canonical"
+    else
+        next="$(bump_version "$canonical" "$bump")" || return 1
+    fi
+    assert_semver "$next" || return 1
+
+    if git -C "$ROOT_DIR" rev-parse --verify --quiet "refs/tags/v$next" >/dev/null; then
+        err "tag v$next already exists locally; a released version is never re-cut"
+        return 1
+    fi
+    remote=0
+    git -C "$ROOT_DIR" ls-remote --exit-code --tags origin "refs/tags/v$next" \
+        >/dev/null 2>&1 || remote=$?
+    case "$remote" in
+        0) err "tag v$next already exists on origin"; return 1 ;;
+        2) : ;;
+        *) err "could not check whether v$next exists on origin"; return 1 ;;
+    esac
+
+    printf '\n'
+    field "from"    "$canonical"
+    field "to"      "$next"
+    field "tag"     "v$next"
+    field "commit"  "chore(release): v$next"
+    field "pushes"  "main and the tag, in one atomic push"
+    field "then"    "export.sh labels the bundle $next instead of a dev version"
+
+    warn "cutting a release rewrites Cargo.toml, Cargo.lock and the frontend versions"
+    confirm "Run the local suites first? (recommended)" && { action_verify || {
+        err "verification failed; nothing was changed"
+        return 1
+    }; }
+
+    confirm "Cut release v$next?" || { warn "cancelled"; return 0; }
+
+    if [[ "$bump" != none ]]; then
+        printf '\n'
+        if ! write_release_version "$next"; then
+            err "the version was not advanced"
+            restore_version_files
+            return 1
+        fi
+
+        local files
+        mapfile -t files < <(version_files "$ROOT_DIR")
+        ( cd "$ROOT_DIR" && git add -- "${files[@]}" ) || {
+            err "could not stage the version files"
+            restore_version_files
+            return 1
+        }
+        git -C "$ROOT_DIR" commit --quiet -m "chore(release): v$next" || {
+            err "the release commit failed; no tag or push was attempted"
+            return 1
+        }
+        ok "committed the bump"
+    fi
+
+    git -C "$ROOT_DIR" tag -a "v$next" -m "Release v$next" || {
+        err "tagging failed; nothing was pushed"
+        return 1
+    }
+    ok "tagged v$next"
+
+    # Atomic: main and the tag land together or neither does. A tag on a commit
+    # origin does not have is a version nobody else can build.
+    step "pushing main and v$next atomically"
+    if ! git -C "$ROOT_DIR" push --atomic origin \
+        refs/heads/main:refs/heads/main "refs/tags/v$next:refs/tags/v$next"; then
+        err "the atomic push failed; origin was not partially updated"
+        warn "the commit and tag v$next are retained locally — retry the push after checking origin"
+        warn "export.sh will keep producing dev labels until the tag is on origin"
+        return 1
+    fi
+    ok "pushed main and v$next"
+
+    printf '\n'
+    field "version" "$next"
+    field "next"    "./release_manager/export.sh --engine"
+    info "the bundle and image will be labelled $next, with kind=stable"
+    printf '\n'
+}
+
 # ── menus ───────────────────────────────────────────────────────────────────
 
 pause_after_action() {
@@ -668,22 +884,24 @@ menu_build_ship() {
         cat <<MENU
 
 ${c_bold}━━ Build + Ship${c_rst}
-   1) Build a bundle          build the image and stage a versioned bundle
-   2) Re-stage a bundle       reuse the existing image, restage the artifacts
-   3) Ship and deploy         upload the newest bundle and deploy it
-   4) Ship only               upload for inspection; do not deploy
-   5) Force redeploy          deploy again even if that version is already live
+   1) Cut a release           bump the version, commit, tag and push
+   2) Build a bundle          build the image and stage a versioned bundle
+   3) Re-stage a bundle       reuse the existing image, restage the artifacts
+   4) Ship and deploy         upload the newest bundle and deploy it
+   5) Ship only               upload for inspection; do not deploy
+   6) Force redeploy          deploy again even if that version is already live
    b) Back
 
 MENU
         printf '%s   ➜ Build + Ship choice: %s' "$c_bold" "$c_rst"
         read -r choice || return 0
         case "$choice" in
-            1) action_export build     || warn "export did not complete" ;;
-            2) action_export restage   || warn "re-stage did not complete" ;;
-            3) action_deploy deploy    || warn "deploy did not complete" ;;
-            4) action_deploy ship-only || warn "shipping did not complete" ;;
-            5) action_deploy force     || warn "forced redeploy did not complete" ;;
+            1) action_cut_release      || warn "no release was cut" ;;
+            2) action_export build     || warn "export did not complete" ;;
+            3) action_export restage   || warn "re-stage did not complete" ;;
+            4) action_deploy deploy    || warn "deploy did not complete" ;;
+            5) action_deploy ship-only || warn "shipping did not complete" ;;
+            6) action_deploy force     || warn "forced redeploy did not complete" ;;
             b|B) return 0 ;;
             *) warn "unknown choice: $choice"; continue ;;
         esac
@@ -761,7 +979,6 @@ ${c_bold}━━ Checks${c_rst}
    2) Validate path contract  the tracked paths.json is the sole path authority
    3) Engine guide            the operator document for this stack
    b) Back
-
 MENU
         printf '%s   ➜ Checks choice: %s' "$c_bold" "$c_rst"
         read -r choice || return 0
@@ -812,17 +1029,23 @@ status_main() {
         --diagnose) action_diagnose; return $? ;;
         --verify)   action_verify; return $? ;;
         --reload)   action_reload; return $? ;;
+        --cut-release)
+            [[ "$UI_INTERACTIVE" == true ]] \
+                || { err "--cut-release needs a terminal: it asks which part to bump and confirms before pushing"; return 1; }
+            action_cut_release; return $? ;;
         --engine|engine|index_engine) shift; status_main "${1:-}"; return $? ;;
         --help|-h)
             cat <<'USAGE'
-Usage: ./release_manager/status.sh [--status | --diagnose | --verify | --reload]
+Usage: ./release_manager/status.sh [--status | --diagnose | --verify | --reload | --cut-release]
 
 With no arguments, opens the interactive release control centre.
 
-  --status     print the state dashboard and exit (read-only)
-  --diagnose   check the VPS for tooling, paths and permissions, then exit
-  --verify     run the offline test suites and exit
-  --reload     recreate the deployed containers with the current on-VPS env
+  --status        print the state dashboard and exit (read-only)
+  --diagnose      check the VPS for tooling, paths and permissions, then exit
+  --verify        run the offline test suites and exit
+  --reload        recreate the deployed containers with the current on-VPS env
+  --cut-release   bump the version, commit, tag and push; the only place the
+                  version advances. export.sh reads the tag, never writes one.
 USAGE
             return 0 ;;
         "") : ;;
@@ -830,7 +1053,7 @@ USAGE
     esac
 
     [[ "$UI_INTERACTIVE" == true ]] \
-        || { err "not a terminal — use --status, --diagnose, --verify or --reload"; return 1; }
+        || { err "not a terminal — use --status, --diagnose, --verify, --reload or --cut-release"; return 1; }
     menu_main
 }
 

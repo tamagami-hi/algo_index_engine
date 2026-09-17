@@ -86,13 +86,14 @@ every action that restarts the engine says so before asking. The individual
 scripts remain the entry points and keep working on their own:
 
 ```sh
-./release_manager/status.sh               # interactive control centre
-./release_manager/status.sh --status      # dashboard only, read-only
-./release_manager/status.sh --diagnose    # VPS tooling, paths, permissions
-./release_manager/status.sh --verify      # offline suites
-./release_manager/provision.sh --engine   # once per host
-./release_manager/export.sh    --engine   # build + stage a bundle
-./release_manager/deploy.sh    --engine   # upload + deploy
+./release_manager/status.sh                  # interactive control centre
+./release_manager/status.sh --status         # dashboard only, read-only
+./release_manager/status.sh --diagnose       # VPS tooling, paths, permissions
+./release_manager/status.sh --verify         # offline suites
+./release_manager/status.sh --cut-release    # bump the version, commit, tag, push
+./release_manager/provision.sh --engine      # once per host
+./release_manager/export.sh    --engine      # build + stage a bundle
+./release_manager/deploy.sh    --engine      # upload + deploy
 ./release_manager/rollback.sh  --engine --list
 ```
 
@@ -102,6 +103,36 @@ path authority.
 
 `.env` on the server is placed and owned by the operator. The pipeline does not
 modify or copy it; release manifests record its digest to detect configuration drift.
+
+### Versions and cutting a release
+
+`Cargo.toml` is the only authority for the version. `export.sh` labels a bundle
+`X.Y.Z` when the tree is clean and HEAD is exactly the tag `vX.Y.Z`, and
+`<next patch>-dev.<commits>.g<sha>[.dirty]` otherwise — the patch is bumped for a
+dev label so it always sorts after the release it descends from. `--status` prints
+the label the next export would produce, so you can check before spending a build.
+
+`status.sh --cut-release` is the only place the version advances and the only place
+a tag is made. It offers patch, minor, major, or tagging the current version as it
+stands, then:
+
+- refuses anything but a clean `main` in step with `origin/main`, and refuses a tag
+  that already exists locally or on origin
+- writes `Cargo.toml`, regenerates `Cargo.lock`, and writes `web/package.json` and
+  `web/package-lock.json` including the lock's own `packages[""].version`
+- proves the result with `cargo check --locked`, which is what CI runs, and restores
+  every file if any step fails
+- commits `chore(release): vX.Y.Z`, makes an annotated tag, and pushes the branch and
+  the tag in one `git push --atomic`
+
+The lock file is the reason this is scripted rather than a manual edit. `Cargo.lock`
+records the package's own version, and CI runs clippy, tests and the release build
+with `--locked`, which refuses to update it — so a bump that edits only `Cargo.toml`
+fails every Rust job. `npm ci` likewise refuses a tree where `package.json` and
+`package-lock.json` disagree. Four files, two of which break the build when they
+drift.
+
+`export.sh` and `deploy.sh` make no git writes at all; they only read the tag.
 
 ## Web interface and access
 
@@ -292,6 +323,7 @@ bash release_manager/tests/access_control.sh
 bash release_manager/tests/port_configuration.sh
 bash release_manager/tests/nginx_ship.sh
 bash release_manager/tests/release_profile.sh
+bash release_manager/tests/version_bump.sh
 cargo build --locked --release
 ```
 
