@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::dhan_api::dhan_oauth::shared_callback::SharedCallback;
 use crate::option_chain::book::ChainColumns;
 use crate::risk_engine;
 use crate::server::state::{EngineState, Snapshot};
@@ -44,7 +45,9 @@ struct StreamFrame {
     state: Snapshot,
 }
 
-const DEFAULT_ADDR: &str = "127.0.0.1:8081";
+#[cfg(test)]
+#[path = "../../tests/server/shared_callback.rs"]
+mod shared_callback_tests;
 const WEB_ROOT: &str = "web/dist";
 const ADDR_VARIABLE: &str = "BLACKBOX_HTTP_ADDR";
 const PUBLISH_INTERVAL_VARIABLE: &str = "BLACKBOX_PUBLISH_INTERVAL_MS";
@@ -82,15 +85,21 @@ struct Http {
 }
 
 pub(crate) fn listen_addr() -> Result<SocketAddr> {
-    let raw = std::env::var(ADDR_VARIABLE).unwrap_or_else(|_| DEFAULT_ADDR.to_owned());
-    raw.parse()
-        .with_context(|| format!("{ADDR_VARIABLE} is not a valid socket address: {raw}"))
+    let raw = std::env::var(ADDR_VARIABLE).with_context(|| {
+        format!("Missing {ADDR_VARIABLE}; configure the backend address in .env")
+    })?;
+    let addr: SocketAddr = raw
+        .parse()
+        .with_context(|| format!("{ADDR_VARIABLE} is not a valid socket address"))?;
+    anyhow::ensure!(addr.port() != 0, "{ADDR_VARIABLE} requires a nonzero port");
+    Ok(addr)
 }
 
 pub(crate) async fn serve(
     engine: EngineState,
-    addr: SocketAddr,
+    listener: tokio::net::TcpListener,
     shutdown: CancellationToken,
+    callback: Option<SharedCallback>,
 ) -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
@@ -117,6 +126,10 @@ pub(crate) async fn serve(
             engine,
             shutdown: shutdown.clone(),
         });
+    let app = match callback {
+        Some(callback) => app.merge(callback.router()),
+        None => app,
+    };
 
     let web_root = crate::config::data_path(WEB_ROOT);
     let app = if web_root.is_dir() {
@@ -131,9 +144,9 @@ pub(crate) async fn serve(
         app
     };
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("cannot bind the HTTP server to {addr}"))?;
+    let addr = listener
+        .local_addr()
+        .context("cannot read the HTTP listener address")?;
 
     tracing::info!(%addr, "HTTP server listening");
 

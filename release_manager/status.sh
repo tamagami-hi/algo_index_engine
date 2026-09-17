@@ -78,6 +78,7 @@ else
     paths_validate "$STACK" "$PATHS_FILE" || true
 fi
 REMOTE_DIR="$(paths_get "$PATHS_FILE" .vps.stack_dir)" || exit 1
+REMOTE_ENV_FILE="$(paths_get "$PATHS_FILE" .vps.env_file)" || exit 1
 field "remote stack" "$REMOTE_DIR"
 field "health mode"  "$(paths_get "$PATHS_FILE" .health.mode)"
 
@@ -114,13 +115,13 @@ VERSION_NAME="$(stack_attr "$STACK" version_file)"
 PROJECT="$(paths_get "$PATHS_FILE" .vps.compose_project)"
 ROLLBACK_IMAGES="$(paths_get "$PATHS_FILE" .backup.rollback_images)"
 
-REMOTE_STATE="$(bb_ssh "bash -s -- '$REMOTE_DIR' '$VERSION_NAME' '$PROJECT' '$ROLLBACK_IMAGES'" <<'REMOTE' || true
+REMOTE_STATE="$(bb_ssh "bash -s -- '$REMOTE_DIR' '$VERSION_NAME' '$PROJECT' '$ROLLBACK_IMAGES' '$REMOTE_ENV_FILE'" <<'REMOTE' || true
 set -u
-dir="$1"; version_name="$2"; project="$3"; rollback_images="$4"
+dir="$1"; version_name="$2"; project="$3"; rollback_images="$4"; env_file="$5"
 printf 'live_version=%s\n' "$(jq -r '.version // ""' "$dir/$version_name" 2>/dev/null || true)"
 printf 'live_status=%s\n'  "$(jq -r '.status // ""'  "$dir/$version_name" 2>/dev/null || true)"
 printf 'live_prev=%s\n'    "$(jq -r '.previous // ""' "$dir/$version_name" 2>/dev/null || true)"
-printf 'env_present=%s\n'  "$([[ -e "$dir/.env" ]] && echo yes || echo no)"
+printf 'env_present=%s\n'  "$([[ -e "$env_file" ]] && echo yes || echo no)"
 printf 'containers=%s\n'   "$(docker ps --filter "label=com.docker.compose.project=$project" --format '{{.Names}} {{.Status}}' 2>/dev/null | paste -sd'|' -)"
 printf 'rollbacks=%s\n'    "$(find "$rollback_images" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | paste -sd',' -)"
 printf 'disk=%s\n'         "$(df -h --output=avail "$dir" 2>/dev/null | tail -n1 | tr -d ' ')"

@@ -21,12 +21,12 @@ services:
     container_name: aie-engine
     restart: unless-stopped
     env_file:
-      - .env
+      - ${BLACKBOX_ENV_FILE:-.env}
     environment:
       BLACKBOX_HOME: /app
-      BLACKBOX_HTTP_ADDR: 0.0.0.0:8081
+      BLACKBOX_HTTP_ADDR: 0.0.0.0:${BLACKBOX_HTTP_PORT:?Set BLACKBOX_HTTP_PORT in .env}
     ports:
-      - "127.0.0.1:47601:8081"
+      - "127.0.0.1:${BLACKBOX_HTTP_PORT:?Set BLACKBOX_HTTP_PORT in .env}:${BLACKBOX_HTTP_PORT:?Set BLACKBOX_HTTP_PORT in .env}"
     volumes:
       - engine-data:/app/data
     stop_grace_period: 20s

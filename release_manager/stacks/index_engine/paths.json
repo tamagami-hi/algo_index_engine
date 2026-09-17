@@ -43,7 +43,8 @@
   "has_database": false,
   "health": {
     "mode": "http",
-    "http_url": "http://127.0.0.1:47601/health",
+    "compose_service": "engine",
+    "http_url": "http://127.0.0.1/health",
     "settle_seconds": 30,
     "log_pattern": "HTTP server listening"
   },

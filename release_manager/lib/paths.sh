@@ -109,6 +109,13 @@ paths_validate() {
         paths_get "$file" .health.http_url >/dev/null || return 1
     fi
 
+    local health_service
+    health_service="$(paths_get_opt "$file" .health.compose_service)"
+    if [[ -n "$health_service" && ! "$health_service" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+        printf 'health.compose_service must be a Compose service name: %s\n' "$health_service" >&2
+        return 1
+    fi
+
     local keep
     keep="$(paths_get "$file" .retention.keep_releases)" || return 1
     [[ "$keep" =~ ^[0-9]+$ ]] && (( keep >= 1 )) || {

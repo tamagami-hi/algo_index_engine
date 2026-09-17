@@ -167,7 +167,7 @@ pub(super) fn callback_token(query: &str, redirect: &Url) -> Result<String> {
     Ok(tokens[0].1.to_string())
 }
 
-fn browser_response(status: StatusCode, message: &'static str) -> Response {
+pub(super) fn browser_response(status: StatusCode, message: &'static str) -> Response {
     (
         status,
         [

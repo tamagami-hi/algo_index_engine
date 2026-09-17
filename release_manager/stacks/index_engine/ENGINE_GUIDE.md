@@ -39,13 +39,19 @@ pipeline reads its contents, writes it, changes its mode, or deletes it:
 - `deploy.sh` excludes it from rsync and runs without `--delete`, so it can be
   neither overwritten nor removed
 - no script greps it, and the deploy checks only that it *exists*
-- only Docker reads it, via `env_file` in the compose file, at container start
+- Docker reads it for Compose interpolation and container configuration;
+  release manifests record its checksum to detect drift
 
 `.env.example` next to it is reference material, never copied over `.env`.
 
-`DHAN_AUTH_MODE=web` does not work on this host: it shells out to `xdg-open` and
-waits on a loopback callback no browser can reach. Use `token_url` for
-unattended running. `manual` works but a Dhan token expires within 24 hours.
+The example uses `DHAN_AUTH_MODE=web`, with the Dhan callback on the backend
+port. Set `DHAN_API_SECRET` and register the expanded `DHAN_REDIRECT_URL` with
+Dhan: by default `http://127.0.0.1:47601/dhan/callback`. Keep
+`ssh -N -L 47601:127.0.0.1:47601 beonedge` open on your browser's machine,
+open the Dhan consent URL printed in the container logs, and complete login.
+The saved session is reused until it needs renewal. `token_url` remains an
+alternative for fetching tokens without browser login. No second callback
+port is published, and no public exposure is required.
 
 ## Data
 
@@ -62,11 +68,19 @@ Masters accumulate at roughly 34 MiB per trading day. The deploy prunes them to
 
 ## Health
 
-There is no HTTP endpoint yet, so `health.mode` is `container`: the gate asserts
-the container is still running after a settle window with no restarts, and that
-the log contains the pattern from `paths.json`. When the engine grows an HTTP
-surface, switch `health.mode` to `http` and set `health.http_url` — no code
-change is needed.
+`health.mode` is `http`. The gate probes `/health` during the settle window.
+`health.compose_service` selects the service whose rendered Compose mapping
+supplies the probe host and port; `health.http_url` supplies the scheme and path
+and is the fallback for contracts without `compose_service`.
+
+Set `BLACKBOX_HTTP_PORT=47601` in the operator-owned file at `vps.env_file` to
+use the default VPS port, or choose another available port. Docker reads this
+file for Compose interpolation as well as container configuration. The engine
+uses the same env port inside the container, and the host binding stays on
+loopback. The API and built UI share that port. Reach the default mapping with
+`ssh -N -L 47601:127.0.0.1:47601 beonedge`, then open `http://127.0.0.1:47601`.
+Replace both port numbers for a custom mapping. If nginx is enabled, update
+both `proxy_pass` upstreams in its location configuration to match.
 
 A failed health gate triggers an automatic image-level rollback, which is safe
 here only because the engine owns no database.

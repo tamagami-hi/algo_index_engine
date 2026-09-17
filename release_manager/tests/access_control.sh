@@ -145,12 +145,18 @@ printf '\nedge guard\n'
 
 NO_EDGE="$( ( bb_assert_access_control ) 2>&1 || true )"
 check_contains "with no edge declared the operator is told how to reach the UI" \
-    "ssh -N -L 47601" "$NO_EDGE"
+    "ssh -N -L <local-port>" "$NO_EDGE"
 check_not_contains "and that is not treated as a failure" "✗" "$NO_EDGE"
 
 VHOST="$ROOT/nginx/algo-index-engine"
 write_paths true "$VHOST"
 bb_load_paths "$STACK_DIR/paths.json"
+P[health_mode]=http
+P[health_http_url]='http://127.0.0.1/health'
+P[health_compose_service]=engine
+stub_ports <<'JSON'
+{"services":{"engine":{"ports":[{"host_ip":"127.0.0.1","published":"47601","target":47601,"protocol":"tcp"}]}}}
+JSON
 
 MISSING="$( ( bb_assert_access_control ) 2>&1 || true )"
 check_contains "an enabled edge whose vhost is absent is refused" \
@@ -196,7 +202,24 @@ GUARDED="$( ( bb_assert_access_control ) 2>&1 || true )"
 check_contains "a tailnet-guarded vhost is accepted" \
     "restricts the control surface to the tailnet" "$GUARDED"
 
+sed 's/:47601/:47602/g' "$VHOST" > "$VHOST.mismatched"
+mv "$VHOST.mismatched" "$VHOST"
+MISMATCHED="$( ( bb_assert_access_control ) 2>&1 || true )"
+check_contains "an edge with a different upstream port is refused" \
+    "does not proxy to the configured backend address" "$MISMATCHED"
+
+sed 's/:47602/:47601/g' "$VHOST" > "$VHOST.corrected"
+mv "$VHOST.corrected" "$VHOST"
+
 printf '\nthe shipped configs satisfy their own check\n'
+
+# The shipped location config proxies to the port the stack example publishes, so
+# resolve that same port here rather than whatever the last case left behind.
+SHIPPED_PORT="$(sed -n 's/^BLACKBOX_HTTP_PORT=\([0-9][0-9]*\)$/\1/p' \
+    "$HERE/../stacks/index_engine/.env.example")"
+stub_ports <<JSON
+{"services":{"engine":{"ports":[{"host_ip":"127.0.0.1","published":"$SHIPPED_PORT","target":8081,"protocol":"tcp"}]}}}
+JSON
 
 for shipped in "$HERE/../nginx/"*.conf; do
     cp "$shipped" "$VHOST"
@@ -205,6 +228,77 @@ for shipped in "$HERE/../nginx/"*.conf; do
     check_contains "$NAME passes the guard assertion" \
         "restricts the control surface to the tailnet" "$SHIPPED_OUT"
 done
+
+
+
+printf '\nthe edge port is checked against the env file\n'
+
+# bb_published_authority resolves the port Compose publishes; stub it the way the
+# health tests do so this stays offline.
+bb_published_authority() { printf '127.0.0.1:49234\n'; }
+
+cat > "$VHOST" <<'CONF'
+server {
+    listen 80;
+    server_name engine.boe.app.internal;
+    allow 100.64.0.0/10;
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    location / { proxy_pass http://127.0.0.1:49234; }
+}
+CONF
+MATCHING="$( ( bb_assert_access_control ) 2>&1 || true )"
+check_contains "a vhost proxying to the published port is accepted" \
+    "proxies to 49234, matching the env file" "$MATCHING"
+
+cat > "$VHOST" <<'CONF'
+server {
+    listen 80;
+    server_name engine.boe.app.internal;
+    allow 100.64.0.0/10;
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    location / { proxy_pass http://127.0.0.1:47601; }
+}
+CONF
+DRIFTED="$( ( bb_assert_access_control ) 2>&1 || true )"
+check_contains "a vhost left on an old port is refused" \
+    "proxies to port(s) 47601" "$DRIFTED"
+check_contains "and the refusal names the env file as authoritative" \
+    "only source of truth for the port" "$DRIFTED"
+
+cat > "$VHOST" <<'CONF'
+server {
+    listen 80;
+    server_name engine.boe.app.internal;
+    allow 100.64.0.0/10;
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    location /engine/ { proxy_pass http://127.0.0.1:49234; }
+    location = /engine/ready { proxy_pass http://127.0.0.1:47601/ready; }
+}
+CONF
+PARTIAL="$( ( bb_assert_access_control ) 2>&1 || true )"
+check_contains "one stale proxy_pass among correct ones is still refused" \
+    "47601" "$PARTIAL"
+
+cat > "$VHOST" <<'CONF'
+server {
+    listen 80;
+    server_name engine.boe.app.internal;
+    allow 100.64.0.0/10;
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    location / { proxy_pass http://engine_upstream; }
+}
+CONF
+NO_PORT="$( ( bb_assert_access_control ) 2>&1 || true )"
+check_contains "a vhost with no explicit proxy port is refused" \
+    "no proxy_pass with an explicit port" "$NO_PORT"
 
 printf '\n%d passed, %d failed\n\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

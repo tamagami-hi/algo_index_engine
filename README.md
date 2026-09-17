@@ -96,8 +96,35 @@ modify or copy it; release manifests record its digest to detect configuration d
 
 The engine serves its React interface and HTTP API from the same process. Build the
 interface with `cd web && npm ci && npm run build`; containers include it already.
-Local runs listen on `127.0.0.1:8081` by default. `BLACKBOX_HTTP_ADDR` overrides the
-listener; Compose publishes it only on host loopback.
+Native runs require `BLACKBOX_HTTP_ADDR`; the env example derives it from
+`BLACKBOX_HTTP_PORT`. Docker requires `BLACKBOX_HTTP_PORT` from `.env` for both
+the host and container port (local example `8787`, VPS example `47601`), with
+host publishing bound only to `127.0.0.1`. There are no code or Compose port
+defaults. Compose sets the listener to `0.0.0.0:${BLACKBOX_HTTP_PORT}`; the UI and API use this
+one port. In `web` mode, `/dhan/callback` is served by this same backend listener;
+no separate callback port is opened. Both examples derive `DHAN_REDIRECT_URL`
+from `BLACKBOX_HTTP_PORT`, so changing that value moves the UI/API and callback
+together. Register the expanded redirect URL with Dhan after changing the port.
+
+For the VPS, use `release_manager/stacks/index_engine/.env.example` as the
+reference for the operator-owned file at `vps.env_file` in the authoritative
+`paths.json` (currently `/srv/dev_stack/ALGO_INDEX_ENGINE/index_engine/.env`).
+The deployment health probe follows the configured Compose host port. After
+changing it, recreate the container through deployment; no image rebuild is needed.
+With the VPS example port, connect using
+`ssh -N -L 47601:127.0.0.1:47601 beonedge` and open `http://127.0.0.1:47601`.
+For a custom port, set `BLACKBOX_HTTP_PORT` once in the VPS env file, then use
+that port in the SSH tunnel. If nginx is enabled, update both upstreams in its
+location configuration to match: nginx cannot read the env file, so it is the one
+place the number appears twice, and every deploy resolves the port Compose
+publishes and refuses to continue if a `proxy_pass` names a different one.
+
+For frontend development, `cd web && npm run dev` serves the interface on `5178`
+and proxies `/api`, `/health` and `/ready` to the engine. It reads
+`BLACKBOX_HTTP_ADDR` from the repository `.env`, expanding `${BLACKBOX_HTTP_PORT}`
+the way Compose does, so the port comes from the same file as everything else
+rather than from an exported shell variable. Without that file the dev server
+still starts and says on stdout that it is not proxying.
 
 The interface shows market telemetry, option chains, and saved strategy definitions
 with entry blockers. Live order routing is not implemented. `/health` reports process
@@ -117,13 +144,15 @@ looking for.
 
 ### Authentication in a container
 
-`web` mode cannot run headless — it shells out to `xdg-open` and waits on a loopback
-callback that nothing can reach. Two workable options:
-
-- `token_url`, the only mode that runs fully unattended.
-- Bootstrap once: run `cargo run -- --dhan-login` locally, then copy
-  `data/sessions/dhan_oauth.json` into the volume. The container reuses it until it
-  expires, which for a Dhan token means within 24 hours.
+`web` mode works through the backend's callback route. With the default VPS env,
+keep `ssh -N -L 47601:127.0.0.1:47601 beonedge` running on your browser's machine.
+Open the Dhan consent URL printed in the engine logs and complete login within
+five minutes. Your browser redirects to `http://127.0.0.1:47601/dhan/callback`,
+which the tunnel forwards to the same backend that serves the UI/API. `/health`
+remains available while authentication is pending; `/ready` stays unavailable.
+The engine saves and reuses the resulting session. When a fresh login is needed,
+complete browser consent again. `token_url` remains available for fetching an
+existing session token without interactive browser login.
 
 ## Authentication
 
@@ -133,7 +162,7 @@ Only when there is no usable token does it fall back to `DHAN_AUTH_MODE`:
 
 | `DHAN_AUTH_MODE` | Source | Needs |
 | --- | --- | --- |
-| `web` (or `oauth`) | Dhan browser consent, with a local callback | `DHAN_CLIENT_ID`, `DHAN_API_KEY`, `DHAN_API_SECRET`, `DHAN_REDIRECT_URL` |
+| `web` (or `oauth`) | Dhan browser consent, callback on the backend listener | `DHAN_CLIENT_ID`, `DHAN_API_KEY`, `DHAN_API_SECRET`, `DHAN_REDIRECT_URL` |
 | `token_url` | Cal Spread token route, passcode in a header | `DHAN_CLIENT_ID`, `DHAN_API_KEY`, `DHAN_TOKEN_URL`, `TOKEN_PASSCODE` |
 | `manual` | A token you paste in yourself | `DHAN_CLIENT_ID`, `DHAN_API_KEY`, `DHAN_ACCESS_TOKEN` |
 
@@ -148,11 +177,17 @@ Two session files exist because the two routes save separately — `token_url` w
 modes does not discard a token that is still good. A saved token is only reused when its
 recorded client ID and API key match `.env`.
 
-Register this redirect URL with your Dhan app for `web` mode:
+Register the expanded `DHAN_REDIRECT_URL` with your Dhan app for `web` mode.
+For the default VPS configuration:
 
 ```
-http://127.0.0.1:8787/dhan/callback
+http://127.0.0.1:47601/dhan/callback
 ```
+
+The local env example uses `http://127.0.0.1:8787/dhan/callback`.
+The standalone `cargo run -- --dhan-login` command still owns its own temporary
+listener; stop the backend before using it on the same port. For Docker/VPS use
+the running backend's login flow described above.
 
 ## Instrument master
 

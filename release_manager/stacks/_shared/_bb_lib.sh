@@ -70,6 +70,7 @@ bb_load_paths() {
           has_database: (.has_database | tostring),
           health_mode: .health.mode,
           health_http_url: (.health.http_url // ""),
+          health_compose_service: (.health.compose_service // ""),
           health_settle: (.health.settle_seconds // 20 | tostring),
           health_log_pattern: (.health.log_pattern // ""),
           keep_releases: (.retention.keep_releases | tostring),
@@ -102,11 +103,21 @@ docker_bin() { printf '%s\n' "${P[docker]:-docker}"; }
 
 # compose <args...> — docker compose, always with this stack's project and file.
 compose() {
-    ( cd "${P[stack_dir]}" && \
-      BB_VERSION="${BB_VERSION_FOR_COMPOSE:?BB_VERSION_FOR_COMPOSE not set}" \
-      "$(docker_bin)" compose \
-        --project-name "${P[compose_project]}" \
-        --file "${P[compose_file]}" "$@" )
+    (
+        cd "${P[stack_dir]}" || exit 1
+        # Shell variables take precedence over --env-file in Compose. The
+        # operator-managed file is the sole authority for this stack's port.
+        unset BLACKBOX_HTTP_PORT
+        # The container's own environment must come from that same file rather
+        # than whatever .env happens to sit beside the compose file, so the
+        # backend and its callback URL agree with the ports rendered above.
+        BLACKBOX_ENV_FILE="${P[env_file]}" \
+        BB_VERSION="${BB_VERSION_FOR_COMPOSE:?BB_VERSION_FOR_COMPOSE not set}" \
+          "$(docker_bin)" compose \
+            --env-file "${P[env_file]}" \
+            --project-name "${P[compose_project]}" \
+            --file "${P[compose_file]}" "$@"
+    )
 }
 
 # ── locking ─────────────────────────────────────────────────────────────────
@@ -186,7 +197,8 @@ bb_assert_docker() {
 # .env belongs entirely to the operator. Nothing in this pipeline reads its
 # contents, writes it, changes its mode, or deletes it: deploy.sh excludes it
 # from rsync and runs without --delete, and no script greps it. Only Docker reads
-# it, via env_file in the compose file, at container start.
+# it for Compose interpolation and container configuration. Release manifests
+# also record its checksum to detect drift.
 bb_assert_env() {
     [[ -e "${P[env_file]}" ]] \
         || die "missing ${P[env_file]} — place it yourself, then redeploy"
@@ -219,7 +231,15 @@ bb_assert_access_control() {
     if [[ "${P[nginx_enabled]}" != "true" ]]; then
         warn "no nginx edge is configured for this stack"
         warn "the engine is reachable only on VPS loopback — reach the UI with:"
-        warn "  ssh -N -L 47601:127.0.0.1:47601 <this-host>   then http://127.0.0.1:47601"
+        if [[ -n "${P[health_compose_service]:-}" ]]; then
+            local url scheme authority
+            url="$(bb_health_http_url)" || die "cannot resolve the engine access port"
+            scheme="${url%%://*}"
+            authority="${url#*://}"; authority="${authority%%/*}"
+            warn "  ssh -N -L ${authority##*:}:$authority <this-host>   then $scheme://$authority"
+        else
+            warn "  ssh -N -L <local-port>:127.0.0.1:<published-port> <this-host>"
+        fi
         return 0
     fi
 
@@ -234,12 +254,51 @@ bb_assert_access_control() {
     grep -qE '^[[:space:]]*allow[[:space:]]+100\.64\.0\.0/10[[:space:]]*;' "$vhost" \
         || die "$vhost does not restrict access to the tailnet — refusing to deploy"
 
+    bb_assert_edge_port "$vhost"
+
     ok "nginx edge restricts the control surface to the tailnet"
+}
+
+# nginx cannot read the env file, so the vhost is the one place a port has to be
+# written out a second time. It is therefore verified against the env file rather
+# than trusted: a vhost proxying to a port the engine no longer publishes would
+# leave the UI dead with every other check passing.
+bb_assert_edge_port() {
+    local vhost="$1" authority port found
+
+    found="$(grep -oE 'proxy_pass[[:space:]]+https?://[^;[:space:]]+' "$vhost" || true)"
+
+    if [[ -z "$found" ]]; then
+        # A redirect-only bookmark vhost proxies nothing, so it names no port and
+        # there is nothing to drift. It must actually be a redirect, though.
+        grep -qE '^[[:space:]]*return[[:space:]]+30[1-8][[:space:]]' "$vhost" \
+            || die "$vhost neither proxies to the engine nor redirects — it would serve nothing"
+        ok "nginx edge is a redirect only, so it carries no port to drift"
+        return 0
+    fi
+
+    authority="$(bb_published_authority)" \
+        || die "cannot resolve the published port to check $vhost against"
+    port="${authority##*:}"
+
+    local ports wrong=''
+    ports="$(printf '%s\n' "$found" | grep -oE ':[0-9]+' | tr -d ':' | sort -u)"
+    [[ -n "$ports" ]] \
+        || die "$vhost has no proxy_pass with an explicit port — cannot confirm it reaches the engine"
+
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" || "$candidate" == "$port" ]] || wrong+=" $candidate"
+    done <<< "$ports"
+
+    if [[ -n "$wrong" ]]; then
+        die "$vhost does not proxy to the configured backend address: it proxies to port(s)${wrong} but ${P[env_file]} publishes $port — update the vhost to match the env file, which is the only source of truth for the port"
+    fi
+
+    ok "nginx edge proxies to $port, matching the env file"
 }
 
 bb_validate_compose() {
     compose config >/dev/null 2>&1 || {
-        compose config 2>&1 | tail -20 >&2
         die "compose file is not valid for this release"
     }
     ok "compose file validates"
@@ -479,10 +538,43 @@ bb_rollback_describe() {
 # Contract-driven: mode=http probes the engine's /health endpoint, mode=container
 # asserts the service is still running after a settle window and optionally that
 # a log line appeared. Which one applies is declared in paths.json, not here.
+# Resolve only published port metadata; never print the rendered environment.
+# Older contracts retain their literal URL. New contracts follow the env-driven
+# Compose mapping, including when rollback restores an older compose file.
+bb_published_authority() {
+    local service="${P[health_compose_service]:-}" config authority
+    [[ -n "$service" ]] || { warn "no health.compose_service in the path contract"; return 1; }
+    config="$(compose config --format json 2>/dev/null)" \
+        || { warn "cannot render Compose health mapping"; return 1; }
+    authority="$(jq -er --arg service "$service" '
+        .services[$service].ports
+        | if length == 1 then .[0] else error("expected one HTTP mapping") end
+        | select((.protocol // "tcp") == "tcp")
+        | select(.host_ip == "127.0.0.1" or .host_ip == "::1")
+        | (.published | tostring) as $port
+        | select($port | test("^[0-9]+$"))
+        | select(($port | tonumber) >= 1 and ($port | tonumber) <= 65535)
+        | if .host_ip == "::1" then "[::1]:" + $port else .host_ip + ":" + $port end
+    ' <<< "$config" 2>/dev/null)" \
+        || { warn "health service must publish exactly one TCP port on loopback"; return 1; }
+    printf '%s\n' "$authority"
+}
+
+bb_health_http_url() {
+    local url="${P[health_http_url]}" service="${P[health_compose_service]:-}" authority
+    [[ -n "$service" ]] || { printf '%s\n' "$url"; return 0; }
+    [[ "$url" =~ ^https?://[^/]+/ ]] || { warn "invalid health HTTP URL in paths.json"; return 1; }
+    authority="$(bb_published_authority)" || return 1
+    printf '%s://%s/%s\n' "${url%%://*}" "$authority" "${url#*://*/}"
+}
+
 bb_health_gate() {
     local settle="${P[health_settle]:-20}"
     case "${P[health_mode]}" in
-        http) bb_health_http "${P[health_http_url]}" "$settle" ;;
+        http)
+            local url
+            url="$(bb_health_http_url)" || return 1
+            bb_health_http "$url" "$settle" ;;
         *)    bb_health_container "$settle" ;;
     esac
 }

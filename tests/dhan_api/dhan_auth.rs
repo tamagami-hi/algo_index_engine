@@ -28,7 +28,7 @@ async fn isolated_environment_child() {
     let Ok(mode) = std::env::var("DHAN_TEST_CHILD") else {
         return;
     };
-    let result = get_dhan_credentials().await;
+    let result = get_dhan_credentials(None).await;
     if matches!(mode.as_str(), "manual" | "unset") {
         let credentials = result.unwrap();
         assert_eq!(credentials.access_token, "test-token");

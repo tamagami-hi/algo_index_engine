@@ -4,6 +4,7 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
 use crate::dhan_api::dhan_auth::get_dhan_credentials;
+use crate::dhan_api::dhan_oauth::shared_callback::SharedCallback;
 use crate::dhan_api::dhan_ws::ws_dhan_connection;
 use crate::dhan_api::instrument_dl::download_instrument_master;
 use crate::dhan_api::instruments::{Catalog, build_catalog, ist_today, load_instrument_master};
@@ -14,12 +15,16 @@ use crate::server::state::{EngineState, Phase};
 const RETRY_MIN: Duration = Duration::from_secs(5);
 const RETRY_MAX: Duration = Duration::from_secs(300);
 
-pub(crate) async fn run(engine: EngineState, shutdown: CancellationToken) -> Result<()> {
+pub(crate) async fn run(
+    engine: EngineState,
+    shutdown: CancellationToken,
+    callback: Option<SharedCallback>,
+) -> Result<()> {
     let mut backoff = RETRY_MIN;
     let mut loaded: Option<(String, Catalog)> = None;
 
     while !shutdown.is_cancelled() {
-        match cycle(&engine, &mut loaded, &shutdown).await {
+        match cycle(&engine, &mut loaded, &shutdown, callback.as_ref()).await {
             Ok(()) => {
                 if shutdown.is_cancelled() {
                     break;
@@ -55,9 +60,14 @@ async fn cycle(
     engine: &EngineState,
     loaded: &mut Option<(String, Catalog)>,
     shutdown: &CancellationToken,
+    callback: Option<&SharedCallback>,
 ) -> Result<()> {
     engine.set_phase(Phase::Authenticating, "");
-    let credentials = match get_dhan_credentials().await {
+    let authentication = tokio::select! {
+        () = shutdown.cancelled() => return Ok(()),
+        result = get_dhan_credentials(callback) => result,
+    };
+    let credentials = match authentication {
         Ok(credentials) => credentials,
         Err(error) => {
             let detail = format!("{error:#}");

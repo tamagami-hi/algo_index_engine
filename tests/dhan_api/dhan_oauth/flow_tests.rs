@@ -87,3 +87,68 @@ async fn complete_browser_consent_persists_and_reuses_matching_session() {
     assert_eq!(credentials.api_key, "test-app");
     assert_eq!(credentials.access_token, "test-access-token");
 }
+
+#[tokio::test]
+async fn shared_backend_callback_completes_broker_exchange_and_session_reuse() {
+    use super::shared_callback::SharedCallback;
+    use axum::routing::get;
+
+    let config = Config::new("100001", "test-app", "test-secret").unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sessions/oauth.json");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend = format!("http://{}", listener.local_addr().unwrap());
+    let callback = SharedCallback::new(&format!("{backend}/dhan/callback")).unwrap();
+    let router = callback.router().route("/health", get(|| async { "ok" }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let pending = callback.begin().unwrap();
+    let (base, broker) = mock_broker().await;
+    let login_url = server_callbacks::generate_consent(&config, &base)
+        .await
+        .unwrap();
+    assert_eq!(
+        Url::parse(&login_url).unwrap().query(),
+        Some("consentAppId=test-consent")
+    );
+
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client
+            .get(format!("{backend}/health"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "ok"
+    );
+    assert!(
+        client
+            .get(format!("{backend}/dhan/callback?tokenId=callback%2Btoken"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    let token = pending.receive().await.unwrap();
+    let authenticated = server_callbacks::exchange_token(&config, &token, &base)
+        .await
+        .unwrap();
+    session::save(&path, &authenticated).unwrap();
+    broker.await.unwrap();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let reused = session::load(&path, &config, now).unwrap().unwrap();
+    assert_eq!(reused.access_token, "test-access-token");
+    assert!(
+        client
+            .get(format!("{backend}/health"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    server.abort();
+}

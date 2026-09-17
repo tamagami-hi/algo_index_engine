@@ -142,6 +142,9 @@ jobs:
       - name: an open control surface is refused
         run: bash release_manager/tests/access_control.sh
 
+      - name: env-driven port contract
+        run: bash release_manager/tests/port_configuration.sh
+
   image:
     name: container image
     runs-on: ubuntu-latest
@@ -167,19 +170,20 @@ jobs:
       # without a feed would let a broken release pass a deployment health gate.
       - name: liveness and readiness without credentials
         run: |
-          docker run -d --name aie-ci -p 127.0.0.1:8081:8081 \
-            -e BLACKBOX_HTTP_ADDR=0.0.0.0:8081 algo-index-engine:ci
+          TEST_HTTP_PORT=49125
+          docker run -d --name aie-ci -p "127.0.0.1:${TEST_HTTP_PORT}:${TEST_HTTP_PORT}" \
+            -e "BLACKBOX_HTTP_ADDR=0.0.0.0:${TEST_HTTP_PORT}" algo-index-engine:ci
           for _ in $(seq 1 30); do
-            if curl -fsS -m 2 http://127.0.0.1:8081/health >/dev/null 2>&1; then break; fi
+            if curl -fsS -m 2 "http://127.0.0.1:${TEST_HTTP_PORT}/health" >/dev/null 2>&1; then break; fi
             sleep 1
           done
 
           echo "--- /health"
-          curl -fsS -m 5 http://127.0.0.1:8081/health | tee /tmp/health.json
+          curl -fsS -m 5 "http://127.0.0.1:${TEST_HTTP_PORT}/health" | tee /tmp/health.json
           jq -e '.alive == true' /tmp/health.json
 
           echo "--- /ready"
-          code="$(curl -s -o /tmp/ready.json -w '%{http_code}' -m 5 http://127.0.0.1:8081/ready)"
+          code="$(curl -s -o /tmp/ready.json -w '%{http_code}' -m 5 "http://127.0.0.1:${TEST_HTTP_PORT}/ready")"
           cat /tmp/ready.json
           test "$code" = "503" || { echo "expected 503 with no feed, got $code"; exit 1; }
           jq -e '.ready == false and (.reasons | length) > 0' /tmp/ready.json

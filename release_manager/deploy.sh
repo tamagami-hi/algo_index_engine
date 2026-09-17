@@ -94,6 +94,7 @@ paths_validate "$STACK" "$PATHS_FILE" \
     || { err "the $STACK path contract failed validation"; exit 1; }
 REMOTE_DIR="$(paths_get "$PATHS_FILE" .vps.stack_dir)" || exit 1
 BACKUP_ROOT="$(paths_get "$PATHS_FILE" .backup.root)" || exit 1
+REMOTE_ENV_FILE="$(paths_get "$PATHS_FILE" .vps.env_file)" || exit 1
 assert_safe_remote_dir "$REMOTE_DIR" || exit 1
 
 banner "DEPLOY · $STACK"
@@ -179,15 +180,15 @@ ok "SSH ok"
 
 # One round trip that reports everything needed before uploading. Read-only: it
 # changes nothing on the VPS.
-PREFLIGHT="$(bb_ssh "bash -s -- '$REMOTE_DIR' '$BACKUP_ROOT'" <<'REMOTE' || true
+PREFLIGHT="$(bb_ssh "bash -s -- '$REMOTE_DIR' '$BACKUP_ROOT' '$REMOTE_ENV_FILE'" <<'REMOTE' || true
 set -u
-stack_dir="$1"; backup_root="$2"
+stack_dir="$1"; backup_root="$2"; env_file="$3"
 printf 'stack_dir_exists=%s\n'   "$([[ -d "$stack_dir" ]] && echo yes || echo no)"
 printf 'stack_dir_writable=%s\n' "$([[ -w "$stack_dir" ]] && echo yes || echo no)"
 printf 'backup_writable=%s\n'    "$([[ -w "$backup_root" ]] && echo yes || echo no)"
 # Existence only. .env belongs to the operator; nothing here reads it, stats its
 # mode, or changes it.
-printf 'env_present=%s\n'        "$([[ -e "$stack_dir/.env" ]] && echo yes || echo no)"
+printf 'env_present=%s\n'        "$([[ -e "$env_file" ]] && echo yes || echo no)"
 printf 'docker_ok=%s\n'     "$(docker info >/dev/null 2>&1 && echo yes || echo no)"
 printf 'compose_ok=%s\n'    "$(docker compose version >/dev/null 2>&1 && echo yes || echo no)"
 printf 'rsync_ok=%s\n'      "$(command -v rsync >/dev/null 2>&1 && echo yes || echo no)"
@@ -217,11 +218,11 @@ ok "docker, compose, rsync, flock and jq available"
 ok "remote stack and backup trees writable"
 
 if [[ "$(get_flag env_present)" != "yes" ]]; then
-    warn "remote $REMOTE_DIR/.env is not present"
+    warn "remote $REMOTE_ENV_FILE is not present"
     if [[ "$SHIP_ONLY" != true ]]; then
         err "the engine cannot start without it. Place it yourself:"
         err "  ssh $BB_SSH_ALIAS"
-        err "  cd $REMOTE_DIR   # then create .env however you prefer"
+        err "  create $REMOTE_ENV_FILE however you prefer"
         err "Nothing in this pipeline reads, writes or removes that file."
         exit 1
     fi

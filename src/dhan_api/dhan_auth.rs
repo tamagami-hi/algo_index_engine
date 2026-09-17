@@ -1,4 +1,6 @@
+use super::dhan_oauth::shared_callback::SharedCallback;
 use anyhow::{Context, Result, bail};
+use std::net::SocketAddr;
 
 #[allow(dead_code)]
 pub(crate) struct DhanCredentials {
@@ -41,7 +43,21 @@ fn manual_token(token: Option<&str>) -> Result<String> {
     Ok(token.to_owned())
 }
 
-pub(crate) async fn get_dhan_credentials() -> Result<DhanCredentials> {
+pub(crate) fn configured_callback(listener: SocketAddr) -> Result<Option<SharedCallback>> {
+    let mode = optional_env("DHAN_AUTH_MODE")?;
+    let token = optional_env("DHAN_ACCESS_TOKEN")?;
+    if select_mode(mode.as_deref(), token.as_deref())? != AuthMode::Web {
+        return Ok(None);
+    }
+    let redirect = std::env::var("DHAN_REDIRECT_URL").context("Missing DHAN_REDIRECT_URL")?;
+    let callback = SharedCallback::new(&redirect)?;
+    callback.matches_listener(listener)?;
+    Ok(Some(callback))
+}
+
+pub(crate) async fn get_dhan_credentials(
+    callback: Option<&SharedCallback>,
+) -> Result<DhanCredentials> {
     let api_key =
         std::env::var("DHAN_API_KEY").context("Missing DHAN_API_KEY environment variable")?;
     let client_id =
@@ -61,7 +77,7 @@ pub(crate) async fn get_dhan_credentials() -> Result<DhanCredentials> {
     }
 
     let access_token = match mode {
-        AuthMode::Web => return super::dhan_oauth::get_credentials().await,
+        AuthMode::Web => return super::dhan_oauth::get_credentials(callback).await,
         AuthMode::Manual => manual_token(token.as_deref()),
         AuthMode::TokenUrl => {
             let url = std::env::var("DHAN_TOKEN_URL")

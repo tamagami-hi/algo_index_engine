@@ -1,6 +1,7 @@
 mod browser_callback;
 mod server_callbacks;
 mod session;
+pub(crate) mod shared_callback;
 mod types;
 
 #[cfg(test)]
@@ -10,6 +11,7 @@ mod flow_tests;
 use super::dhan_auth::DhanCredentials;
 use anyhow::{Context, Result};
 use server_callbacks::{AUTH_BASE, exchange_token, generate_consent};
+use shared_callback::SharedCallback;
 use types::{Config, DhanSession, EXPIRY_MARGIN_SECONDS};
 
 pub(crate) fn saved_token(client_id: &str, api_key: &str) -> Option<String> {
@@ -27,32 +29,46 @@ pub(crate) fn saved_token(client_id: &str, api_key: &str) -> Option<String> {
     })
 }
 
-pub(crate) async fn get_credentials() -> Result<DhanCredentials> {
+pub(crate) async fn get_credentials(callback: Option<&SharedCallback>) -> Result<DhanCredentials> {
     let config = Config::from_env()?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if let Some(existing) = session::load(&session::path(), &config, now)? {
         return Ok(existing.into());
     }
-    Ok(interactive_login(&config).await?.into())
+    Ok(interactive_login(&config, callback).await?.into())
 }
 
 pub(crate) async fn login() -> Result<DhanCredentials> {
-    let session = interactive_login(&Config::from_env()?).await?;
+    let session = interactive_login(&Config::from_env()?, None).await?;
     println!("Dhan login complete. The session has been saved.");
     Ok(session.into())
 }
 
-async fn interactive_login(config: &Config) -> Result<DhanSession> {
-    let redirect = std::env::var("DHAN_REDIRECT_URL").context("Missing DHAN_REDIRECT_URL")?;
-    let callback = browser_callback::bind(&redirect).await?;
+async fn interactive_login(
+    config: &Config,
+    callback: Option<&SharedCallback>,
+) -> Result<DhanSession> {
+    let token_id = if let Some(callback) = callback {
+        let pending = callback.begin()?;
+        announce_login(config).await?;
+        pending.receive().await?
+    } else {
+        let redirect = std::env::var("DHAN_REDIRECT_URL").context("Missing DHAN_REDIRECT_URL")?;
+        let listener = browser_callback::bind(&redirect).await?;
+        announce_login(config).await?;
+        listener.receive().await?
+    };
+    let authenticated = exchange_token(config, &token_id, AUTH_BASE).await?;
+    session::save(&session::path(), &authenticated)?;
+    Ok(authenticated)
+}
+
+async fn announce_login(config: &Config) -> Result<()> {
     let login_url = generate_consent(config, AUTH_BASE).await?;
     println!("Open this Dhan login URL in your browser:\n{login_url}");
     open_browser(&login_url).await;
     println!("Waiting up to five minutes for Dhan login and 2FA in your browser...");
-    let token_id = callback.receive().await?;
-    let authenticated = exchange_token(config, &token_id, AUTH_BASE).await?;
-    session::save(&session::path(), &authenticated)?;
-    Ok(authenticated)
+    Ok(())
 }
 
 async fn open_browser(url: &str) {
@@ -68,7 +84,7 @@ async fn open_browser(url: &str) {
     .await;
     if !matches!(result, Ok(Ok(status)) if status.success()) {
         eprintln!(
-            "Could not open a browser automatically. Open the login URL shown above on this machine."
+            "Could not open a browser automatically. Open the login URL shown above in a browser that can reach DHAN_REDIRECT_URL (use your SSH tunnel for the VPS)."
         );
     }
 }

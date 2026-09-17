@@ -52,8 +52,9 @@ fails closed on your laptop rather than halfway through a deploy.
 Nothing here reads its contents, writes it, changes its mode, or removes it.
 `deploy.sh` excludes it from rsync and runs without `--delete`, so it can be
 neither overwritten nor removed. The deploy checks only that it *exists*, because
-otherwise the container just crash-loops. Only Docker reads it, via `env_file`,
-at container start.
+otherwise the container just crash-loops. Docker Compose reads it for
+interpolation and container configuration; release manifests record only its
+checksum for drift detection.
 
 `stacks/index_engine/.env.example` is reference material and is never copied over
 `.env`.
@@ -67,10 +68,9 @@ the VPS script on arrival.
 
 ## Health gating
 
-The engine has no HTTP surface yet, so `health.mode` is `container`: the gate
-asserts the container is still running after a settle window with no restarts,
-and that a log pattern appeared. When an HTTP endpoint exists, set
-`health.mode: "http"` and `health.http_url` in the contract — no code changes.
+The engine uses `health.mode: "http"`. The path contract selects the Compose
+service whose published loopback mapping supplies the health probe port, so the
+probe follows `BLACKBOX_HTTP_PORT` without a second port setting.
 
 A failed gate triggers an automatic image-level rollback. That is safe only
 because the engine owns no database; the data volume, holding the session token
@@ -83,7 +83,8 @@ hostname is assigned, and the deployed compose file runs the engine alone.
 
 This host already serves BOE_APP from nginx on 80/443, so a Caddy container here
 would fail to bind and break every deploy. The engine instead publishes its HTTP
-port on loopback only, `127.0.0.1:47601`, matching the convention the other stacks
+port on loopback only. The VPS env example sets `BLACKBOX_HTTP_PORT=47601`; the
+operator-owned env file controls the host and container port, matching the convention the other stacks
 on this box follow. If this engine is ever given a hostname, proxy that port from
 the existing host nginx rather than adding a second web server.
 

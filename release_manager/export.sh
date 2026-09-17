@@ -142,7 +142,7 @@ fi
 section "RUNTIME ACCEPTANCE"
 step "image starts and reports missing configuration"
 ACCEPT_OUT="$(docker run --rm --entrypoint /usr/local/bin/algo_index_engine "$IMAGE_TAG" 2>&1 || true)"
-if printf '%s' "$ACCEPT_OUT" | grep -q 'Missing DHAN_API_KEY'; then
+if printf '%s' "$ACCEPT_OUT" | grep -q 'Missing BLACKBOX_HTTP_ADDR'; then
     ok "runtime path resolution and env handling behave as expected"
 else
     err "image did not fail cleanly on missing configuration:"

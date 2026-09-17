@@ -4,7 +4,7 @@ pub(crate) mod report;
 pub(crate) mod state;
 pub(crate) mod supervisor;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +18,10 @@ const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 pub(crate) async fn run() -> Result<()> {
     let engine = EngineState::new();
     let addr = http::listen_addr()?;
+    let callback = crate::dhan_api::dhan_auth::configured_callback(addr)?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("cannot bind the HTTP server to {addr}"))?;
     let shutdown = CancellationToken::new();
 
     if let Err(error) = crate::risk_engine::store::migrate() {
@@ -29,13 +33,14 @@ pub(crate) async fn run() -> Result<()> {
     supervisor.spawn("http server", {
         let engine = engine.clone();
         let shutdown = shutdown.clone();
-        async move { http::serve(engine, addr, shutdown).await }
+        let callback = callback.clone();
+        async move { http::serve(engine, listener, shutdown, callback).await }
     });
 
     supervisor.spawn("engine loop", {
         let engine = engine.clone();
         let shutdown = shutdown.clone();
-        async move { engine::run(engine, shutdown).await }
+        async move { engine::run(engine, shutdown, callback).await }
     });
 
     let stop = wait_for_stop(&mut supervisor, unix_signal()).await;

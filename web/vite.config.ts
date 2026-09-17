@@ -1,34 +1,51 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { ADDRESS_VARIABLE, apiProxy, readBackendAddress } from "./dev-proxy";
 
-const engine = process.env.ENGINE_ORIGIN ?? "http://127.0.0.1:8081";
+const ENV_FILE = fileURLToPath(new URL("../.env", import.meta.url));
 
-export default defineConfig({
-  plugins: [react()],
-  build: {
-    outDir: "dist",
-    emptyOutDir: true,
-    sourcemap: false,
-  },
-  server: {
-    port: 5178,
-    strictPort: true,
-    proxy: {
-      "/api": { target: engine, changeOrigin: true },
-      "/health": { target: engine, changeOrigin: true },
-      "/ready": { target: engine, changeOrigin: true },
+export default defineConfig(({ command }) => {
+  const serving = command === "serve" && process.env.VITEST === undefined;
+
+  let proxy;
+  if (serving) {
+    try {
+      proxy = apiProxy(readBackendAddress(ENV_FILE));
+    } catch (cause) {
+      // Warned rather than thrown so building and testing never need a backend.
+      // Loud enough that a proxyless dev server is not a mystery when /api
+      // returns the index page instead of JSON.
+      console.warn(
+        `[vite] not proxying /api, /health or /ready: ${String(cause)}\n` +
+          `[vite] set ${ADDRESS_VARIABLE} in ${ENV_FILE}, the one place this repository takes the port from.`,
+      );
+    }
+  }
+
+  return {
+    plugins: [react()],
+    build: {
+      outDir: "dist",
+      emptyOutDir: true,
+      sourcemap: false,
     },
-  },
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./tests/support/setup.ts"],
-    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "json-summary"],
-      include: ["src/**/*.ts", "src/**/*.tsx"],
-      exclude: ["src/main.tsx", "src/types/**"],
+    server: {
+      port: 5178,
+      strictPort: true,
+      ...(proxy === undefined ? {} : { proxy }),
     },
-  },
+    test: {
+      environment: "jsdom",
+      globals: true,
+      setupFiles: ["./tests/support/setup.ts"],
+      include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+      coverage: {
+        provider: "v8",
+        reporter: ["text", "json-summary"],
+        include: ["src/**/*.ts", "src/**/*.tsx", "dev-proxy.ts"],
+        exclude: ["src/main.tsx", "src/types/**"],
+      },
+    },
+  };
 });

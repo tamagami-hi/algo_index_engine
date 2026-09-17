@@ -44,6 +44,8 @@ banner "PROVISION · $STACK"
 
 ROOT="$(paths_get "$PATHS_FILE" .vps.root)"
 STACK_DIR="$(paths_get "$PATHS_FILE" .vps.stack_dir)"
+ENV_FILE="$(paths_get "$PATHS_FILE" .vps.env_file)"
+ENV_EXAMPLE="$(paths_get "$PATHS_FILE" .vps.env_example)"
 assert_safe_remote_dir "$ROOT" || exit 1
 assert_safe_remote_dir "$STACK_DIR" || exit 1
 
@@ -93,24 +95,24 @@ step "staging .env.example"
 bb_ssh_opts
 printf -v RSYNC_SSH '%q ' ssh "${BB_SSH_OPTS[@]}"
 rsync -az --chmod=F644 -e "$RSYNC_SSH" \
-    "$RM_DIR/stacks/$STACK/.env.example" "${BB_SSH_ALIAS}:${STACK_DIR}/" \
+    "$RM_DIR/stacks/$STACK/.env.example" "${BB_SSH_ALIAS}:${ENV_EXAMPLE}" \
     || { err "failed to stage .env.example"; exit 1; }
-ok ".env.example staged"
+ok "$ENV_EXAMPLE staged"
 
 step "checking docker on the VPS"
 bb_ssh 'docker info >/dev/null 2>&1' || { err "docker is not usable by the deploy user"; exit 1; }
 bb_ssh 'docker compose version >/dev/null 2>&1' || { err "docker compose plugin missing"; exit 1; }
 ok "docker and compose usable without sudo"
 
-ENV_STATE="$(bb_ssh "test -e '$STACK_DIR/.env' && echo present || echo missing")"
+ENV_STATE="$(bb_ssh "test -e '$ENV_FILE' && echo present || echo missing")"
 
 banner "PROVISIONED"
 if [[ "$ENV_STATE" == present ]]; then
-    ok ".env is present — left completely untouched"
+    ok "$ENV_FILE is present — left completely untouched"
 else
-    warn ".env is not present; the deploy will refuse to run without it"
-    printf '\n   Place it yourself at:\n\n     %s:%s/.env\n\n' "$BB_SSH_ALIAS" "$STACK_DIR"
+    warn "$ENV_FILE is not present; the deploy will refuse to run without it"
+    printf '\n   Place it yourself at:\n\n     %s:%s\n\n' "$BB_SSH_ALIAS" "$ENV_FILE"
     printf '   No script here reads, writes, or removes that file. .env.example\n'
-    printf '   above is reference only. Use DHAN_AUTH_MODE=token_url: web mode\n'
-    printf '   needs a browser this host does not have.\n\n'
+    printf '   above is reference only. For DHAN_AUTH_MODE=web, use an SSH tunnel\n'
+    printf '   from the browser machine to the backend port before completing Dhan login.\n\n'
 fi
