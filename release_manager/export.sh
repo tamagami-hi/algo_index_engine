@@ -34,6 +34,8 @@ source "$RM_DIR/lib/stacks.sh"
 source "$RM_DIR/lib/nginx_ship.sh"
 # shellcheck source=lib/paths.sh
 source "$RM_DIR/lib/paths.sh"
+# shellcheck source=lib/acceptance.sh
+source "$RM_DIR/lib/acceptance.sh"
 
 STACK=''
 SKIP_BUILD=false
@@ -144,11 +146,23 @@ fi
 section "RUNTIME ACCEPTANCE"
 step "image starts and reports missing configuration"
 ACCEPT_OUT="$(docker run --rm --entrypoint /usr/local/bin/algo_index_engine "$IMAGE_TAG" 2>&1 || true)"
-if printf '%s' "$ACCEPT_OUT" | grep -q 'Missing BLACKBOX_HTTP_ADDR'; then
+if accept_starts_cleanly "$ACCEPT_OUT"; then
     ok "runtime path resolution and env handling behave as expected"
 else
     err "image did not fail cleanly on missing configuration:"
     printf '%s\n' "$ACCEPT_OUT" | head -5 >&2
+    exit 1
+fi
+
+step "the binary is an optimised release build"
+if accept_release_profile "$ACCEPT_OUT"; then
+    ok "the image carries a release build"
+elif accept_profile_reported "$ACCEPT_OUT"; then
+    err "the image carries a debug build — the Dockerfile must run cargo build --release"
+    printf '%s\n' "$ACCEPT_OUT" | grep -i 'profile=' >&2
+    exit 1
+else
+    err "the image reports no build profile; it predates this check — rebuild without --skip-build"
     exit 1
 fi
 

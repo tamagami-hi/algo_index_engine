@@ -188,6 +188,7 @@ fn encode(state: &EngineState) -> String {
 struct Liveness {
     alive: bool,
     version: &'static str,
+    profile: &'static str,
     phase: &'static str,
     uptime_seconds: i64,
 }
@@ -211,6 +212,7 @@ async fn health(State(http): State<Http>) -> Response {
         &Liveness {
             alive: true,
             version: snapshot.version,
+            profile: crate::server::state::PROFILE,
             phase: snapshot.phase_label,
             uptime_seconds: snapshot.uptime_seconds,
         },

@@ -612,7 +612,7 @@ action_verify() {
     fi
 
     local suite
-    for suite in rollback_pairing access_control port_configuration nginx_ship; do
+    for suite in rollback_pairing access_control port_configuration nginx_ship release_profile; do
         [[ -f "$RM_DIR/tests/$suite.sh" ]] || continue
         step "$suite"
         bash "$RM_DIR/tests/$suite.sh" >/dev/null 2>&1 \
@@ -630,6 +630,18 @@ action_verify() {
         else
             info "web/node_modules absent; run npm ci in web/ first"
         fi
+
+        # cargo test builds the debug profile. The image ships the release
+        # profile, so a release-only compile failure would sit here unnoticed
+        # until export.sh runs the Docker build, after the version has been
+        # advanced. Building it here is the same work, done before it costs
+        # anything. The image also applies -C target-cpu=x86-64-v3; that exact
+        # combination is built in CI, and pinning it here would invalidate the
+        # local cache on every hand-run cargo build --release.
+        step "cargo build --release (the profile the image ships)"
+        ( cd "$ROOT_DIR" && cargo build --locked --release --quiet ) \
+            && ok "the release profile compiles" \
+            || { err "the release profile does not compile — export.sh would fail on the same code"; rc=1; }
     fi
 
     printf '\n'

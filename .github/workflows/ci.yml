@@ -148,6 +148,9 @@ jobs:
       - name: env-driven port contract
         run: bash release_manager/tests/port_configuration.sh
 
+      - name: the shipped binary is an optimised release build
+        run: bash release_manager/tests/release_profile.sh
+
   image:
     name: container image
     runs-on: ubuntu-latest
@@ -184,6 +187,10 @@ jobs:
           echo "--- /health"
           curl -fsS -m 5 "http://127.0.0.1:${TEST_HTTP_PORT}/health" | tee /tmp/health.json
           jq -e '.alive == true' /tmp/health.json
+
+          echo "--- the image is an optimised release build, by the binary's own account"
+          jq -e '.profile == "release"' /tmp/health.json \
+            || { echo "the container reports a debug build; the Dockerfile must use cargo build --release"; exit 1; }
 
           echo "--- /ready"
           code="$(curl -s -o /tmp/ready.json -w '%{http_code}' -m 5 "http://127.0.0.1:${TEST_HTTP_PORT}/ready")"

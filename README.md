@@ -155,7 +155,8 @@ still starts and says on stdout that it is not proxying.
 
 The interface shows market telemetry, option chains, and saved strategy definitions
 with entry blockers. Live order routing is not implemented. `/health` reports process
-liveness; `/ready` returns 503 with reasons when the engine lacks usable market data.
+liveness and, in `profile`, whether the running binary was compiled `release` or
+`debug`; `/ready` returns 503 with reasons when the engine lacks usable market data.
 By default, SSE updates publish at most every 50 ms, while the engine processes every
 feed frame. `BLACKBOX_PUBLISH_INTERVAL_MS` configures the publish interval.
 
@@ -262,8 +263,10 @@ filter, so the file and the chains can never disagree about which day it is.
 and manual dispatch. It checks Rust formatting, Clippy with warnings denied, tests,
 and a release build for `x86-64-v3`; frontend types, tests with coverage, and production
 build; shell syntax, ShellCheck, and offline rollback/access-control regressions.
-It also builds the container and checks that it serves liveness, refuses readiness
-without broker credentials, and includes the frontend. No deployment is performed.
+It also builds the container and checks that it serves liveness, reports an optimised
+release build, refuses readiness without broker credentials, receives and journals an
+order postback, refuses an oversized one, and includes the frontend. No deployment is
+performed.
 
 Rust LCOV and frontend coverage summaries are uploaded as workflow artifacts.
 Coverage is reported without a percentage gate. The recorded Rust baseline at
@@ -286,7 +289,24 @@ npm --prefix web run build
 find release_manager -name '*.sh' -print0 | xargs -0 shellcheck -x -P SCRIPTDIR -S warning
 bash release_manager/tests/rollback_pairing.sh
 bash release_manager/tests/access_control.sh
+bash release_manager/tests/port_configuration.sh
+bash release_manager/tests/nginx_ship.sh
+bash release_manager/tests/release_profile.sh
+cargo build --locked --release
 ```
+
+`release_manager/status.sh --verify` runs the shell suites and offers the Rust and
+frontend ones, ending with a release build. The image is compiled with
+`cargo build --release`, so a release-only failure that the debug test build never
+sees would otherwise surface during `export.sh`, after the version label has already
+been advanced.
+
+The binary reports its own profile from `cfg!(debug_assertions)`, on startup and on
+`/health`. `export.sh` refuses to bundle an image whose transcript does not say
+`release`, and CI asks the running container the same question. A debug build starts,
+serves, deploys and rolls back correctly while running the option-chain hot path
+several times slower than it was measured at, so nothing else in the pipeline would
+notice.
 
 Coverage requires `cargo-llvm-cov` and the Rust `llvm-tools-preview` component;
 deployment checks require Bash, ShellCheck, and jq. Broker tests use local mocks.

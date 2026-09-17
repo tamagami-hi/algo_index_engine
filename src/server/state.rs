@@ -12,6 +12,12 @@ use crate::option_chain::metrics::ChainMetrics;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub(crate) const PROFILE: &str = if cfg!(debug_assertions) {
+    "debug"
+} else {
+    "release"
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Phase {
